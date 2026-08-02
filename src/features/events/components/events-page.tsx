@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { AlertCircle, CalendarDays, LoaderCircle, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useMasterData } from "@/features/master-data";
@@ -13,7 +15,8 @@ import { EventsToast } from "./events-toast";
 
 type Notice = { kind: "success" | "error"; message: string } | null;
 
-export function EventsPage() {
+export function EventsPage({ showFinancials = true }: { showFinancials?: boolean }) {
+  const searchParams = useSearchParams();
   const events = useEvents();
   const venues = useVenues();
   const eventTypes = useMasterData("event_types");
@@ -21,6 +24,7 @@ export function EventsPage() {
   const [formEvent, setFormEvent] = useState<EventRecord | null | undefined>(undefined);
   const [deleteEvent, setDeleteEvent] = useState<EventRecord | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
+  useEffect(() => { const eventId = searchParams.get("event"); const selected = events.data?.find((event) => event.id === eventId); if (selected) setFormEvent(selected); }, [events.data, searchParams]);
   const showSuccess = (message: string) => setNotice({ kind: "success", message });
   const showError = (message: string) => setNotice({ kind: "error", message });
 
@@ -28,7 +32,7 @@ export function EventsPage() {
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-medium text-muted-foreground">תפעול</p><h2 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">אירועים</h2><p className="mt-2 text-sm text-muted-foreground">תכנון, תמחור ומעקב אחר כל אירועי Tayo Bar.</p></div><Button type="button" className="sm:hidden" onClick={() => setFormEvent(null)}><Plus data-icon="inline-start" />אירוע חדש</Button></div>
     {notice && <EventsToast kind={notice.kind} message={notice.message} onDismiss={() => setNotice(null)} />}
     {events.isLoading || venues.isLoading || eventTypes.isLoading || packages.isLoading ? <LoadingState /> : events.isError || venues.isError || eventTypes.isError || packages.isError ? <ErrorState /> : !events.data?.length ? <EmptyState onNew={() => setFormEvent(null)} /> : <EventsTable events={events.data} onNew={() => setFormEvent(null)} onEdit={setFormEvent} onDelete={setDeleteEvent} />}
-    {formEvent !== undefined && <EventFormDialog event={formEvent} venues={venues.data ?? []} eventTypes={(eventTypes.data ?? []).map((item) => item.name)} packages={(packages.data ?? []).map((item) => item.name)} onClose={() => setFormEvent(undefined)} onSuccess={showSuccess} onError={showError} />}
+    {formEvent !== undefined && <EventFormDialog event={formEvent} showFinancials={showFinancials} venues={venues.data ?? []} eventTypes={(eventTypes.data ?? []).map((item) => item.name)} packages={(packages.data ?? []).map((item) => item.name)} onClose={() => setFormEvent(undefined)} onSuccess={showSuccess} onError={showError} />}
     {deleteEvent && <DeleteEventDialog event={deleteEvent} onClose={() => setDeleteEvent(null)} onSuccess={showSuccess} onError={showError} />}
   </div>;
 }

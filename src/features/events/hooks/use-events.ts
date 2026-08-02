@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createEvent, deleteEvent, listEvents, listVenues, updateEvent } from "../services";
+import { createEvent, deleteEvent, listEvents, listVenues, updateEvent, updateEventSchedule } from "../services";
 import type { EventFormValues } from "../types";
 
 const eventsKey = ["events"] as const;
@@ -28,4 +28,9 @@ export function useUpdateEvent() {
 export function useDeleteEvent() {
   const queryClient = useQueryClient();
   return useMutation({ mutationFn: deleteEvent, onSuccess: () => queryClient.invalidateQueries({ queryKey: eventsKey }) });
+}
+
+export function useUpdateEventSchedule() {
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: ({ id, eventDate, startTime }: { id: string; eventDate: string; startTime: string }) => updateEventSchedule(id, eventDate, startTime), onSuccess: () => queryClient.invalidateQueries({ queryKey: eventsKey }) });
 }

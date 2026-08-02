@@ -1,7 +1,7 @@
 export const masterDataKinds = ["venues", "bar_packages", "event_types", "payment_methods"] as const;
 export type MasterDataKind = (typeof masterDataKinds)[number];
-export type MasterDataRecord = { id: string; name: string; createdAt: string; updatedAt: string };
-export type MasterDataInput = { name: string };
+export type MasterDataRecord = { id: string; name: string; colorHex?: string; createdAt: string; updatedAt: string };
+export type MasterDataInput = { name: string; colorHex?: string };
 
 export const masterDataConfig: Record<MasterDataKind, { title: string; singular: string; description: string }> = {
   venues: { title: "אולמות", singular: "אולם", description: "ניהול האולמות הזמינים לאירועים." },

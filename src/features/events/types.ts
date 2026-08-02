@@ -18,6 +18,8 @@ export type EventFormValues = {
   eventType: string;
   packageType: string;
   pricePerGuest: number;
+  vatRate: number;
+  priceIncludesVat: boolean;
   payerType: PayerType;
   paymentStatus: PaymentStatus;
   estimatedAlcoholCost: number;

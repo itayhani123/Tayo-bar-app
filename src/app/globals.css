@@ -26,6 +26,18 @@ a {
 :dir(rtl) table { text-align: right !important; }
 :dir(rtl) input, :dir(rtl) textarea, :dir(rtl) select { text-align: right; }
 
+.calendar-shell .fc { --fc-border-color: var(--border); --fc-page-bg-color: var(--card); --fc-neutral-bg-color: var(--muted); --fc-today-bg-color: color-mix(in oklab, var(--primary) 7%, transparent); --fc-button-bg-color: var(--primary); --fc-button-border-color: var(--primary); --fc-button-hover-bg-color: color-mix(in oklab, var(--primary) 85%, white); --fc-button-active-bg-color: color-mix(in oklab, var(--primary) 75%, black); color: var(--foreground); }
+.calendar-shell .fc-toolbar { gap: .75rem; flex-wrap: wrap; }
+.calendar-shell .fc-toolbar-title { font-size: 1.1rem; }
+.calendar-shell .fc-event { border-width: 1px; cursor: pointer; font-weight: 600; }
+.calendar-shell .calendar-payment-paid { background: #166534; border-color: #14532d; color: #fff; }
+.calendar-shell .calendar-payment-partial { background: #9a3412; border-color: #7c2d12; color: #fff; }
+.calendar-shell .calendar-payment-unpaid { background: #b91c1c; border-color: #991b1b; color: #fff; }
+.dark .calendar-shell .calendar-payment-paid { background: #14532d; color: #dcfce7; }
+.dark .calendar-shell .calendar-payment-partial { background: #7c2d12; color: #ffedd5; }
+.dark .calendar-shell .calendar-payment-unpaid { background: #7f1d1d; color: #fee2e2; }
+@media (max-width: 767px) { .calendar-shell .fc-header-toolbar { align-items: stretch; flex-direction: column; } .calendar-shell .fc-toolbar-chunk { display: flex; justify-content: center; } .calendar-shell .fc-button { padding: .35rem .55rem; font-size: .8rem; } }
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: var(--font-sans);

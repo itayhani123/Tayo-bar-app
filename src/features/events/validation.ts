@@ -11,6 +11,8 @@ export const eventSchema = z.object({
   eventType: z.string().min(1, "יש לבחור סוג אירוע."),
   packageType: z.string().min(1, "יש לבחור חבילת בר."),
   pricePerGuest: z.number().min(0, "המחיר לאורח לא יכול להיות שלילי."),
+  vatRate: z.number().min(0, "שיעור המע״מ חייב להיות אפס או יותר.").max(100, "שיעור המע״מ אינו תקין."),
+  priceIncludesVat: z.boolean(),
   payerType: z.enum(PAYER_TYPES),
   paymentStatus: z.enum(PAYMENT_STATUSES),
   estimatedAlcoholCost: z.number().min(0, "עלות האלכוהול לא יכולה להיות שלילית."),

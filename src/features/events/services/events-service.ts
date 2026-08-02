@@ -11,6 +11,8 @@ type EventDatabaseRow = {
   client_phone: string | null;
   guest_count: number;
   price_per_guest: number | string;
+  vat_rate: number | string;
+  price_includes_vat: boolean;
   package_type: EventFormValues["packageType"];
   payer_type: EventFormValues["payerType"];
   payment_status: EventFormValues["paymentStatus"];
@@ -27,7 +29,7 @@ function toRecord(row: EventDatabaseRow, venueName: string): EventRecord {
   return {
     id: row.id, eventDate: row.event_date, startTime: row.start_time, eventType: row.event_type,
     venueId: row.venue_id, venueName, clientName: row.client_name, clientPhone: row.client_phone ?? "",
-    guestCount: row.guest_count, pricePerGuest: Number(row.price_per_guest), packageType: row.package_type,
+    guestCount: row.guest_count, pricePerGuest: Number(row.price_per_guest), vatRate: Number(row.vat_rate), priceIncludesVat: row.price_includes_vat, packageType: row.package_type,
     payerType: row.payer_type, paymentStatus: row.payment_status, managerEmployeeId: row.manager_employee_id ?? "",
     securityCheckReceived: row.security_check_received, invoiceIssued: row.invoice_issued,
     estimatedAlcoholCost: Number(row.estimated_alcohol_cost), notes: row.notes ?? "", createdAt: row.created_at, updatedAt: row.updated_at,
@@ -38,7 +40,7 @@ function toPayload(values: EventFormValues) {
   return {
     event_date: values.eventDate, start_time: values.startTime, event_type: values.eventType, venue_id: values.venueId,
     client_name: values.clientName.trim(), client_phone: values.clientPhone.trim() || null, guest_count: values.guestCount,
-    price_per_guest: values.pricePerGuest, package_type: values.packageType, payer_type: values.payerType,
+    price_per_guest: values.pricePerGuest, vat_rate: values.vatRate, price_includes_vat: values.priceIncludesVat, package_type: values.packageType, payer_type: values.payerType,
     payment_status: values.paymentStatus, manager_employee_id: values.managerEmployeeId || null,
     security_check_received: values.securityCheckReceived, invoice_issued: values.invoiceIssued,
     estimated_alcohol_cost: values.estimatedAlcoholCost, notes: values.notes.trim() || null,
@@ -111,5 +113,10 @@ export async function updateEvent(id: string, values: EventFormValues): Promise<
 
 export async function deleteEvent(id: string): Promise<void> {
   const { error } = await createClient().from("events").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function updateEventSchedule(id: string, eventDate: string, startTime: string): Promise<void> {
+  const { error } = await createClient().from("events").update({ event_date: eventDate, start_time: startTime }).eq("id", id);
   if (error) throw error;
 }

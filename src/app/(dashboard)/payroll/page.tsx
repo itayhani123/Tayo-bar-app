@@ -1,5 +1,5 @@
-import { PlaceholderPage } from "@/components/ui/placeholder-page";
+import { PayrollPage as PayrollFeaturePage } from "@/features/payroll";
 
 export default function PayrollPage() {
-  return <PlaceholderPage title="משכורות" description="סביבת עבודה מסודרת למחזורי שכר ורשומות תגמול." icon="payroll" />;
+  return <PayrollFeaturePage />;
 }
