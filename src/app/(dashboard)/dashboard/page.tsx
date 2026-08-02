@@ -1,5 +1,5 @@
 import { PlaceholderPage } from "@/components/ui/placeholder-page";
 
 export default function DashboardPage() {
-  return <PlaceholderPage title="Welcome to Tayo Bar" description="Your central workspace for managing bar operations, people, and finances." icon="dashboard" />;
+  return <PlaceholderPage title="ברוכים הבאים ל־Tayo Bar" description="סביבת העבודה המרכזית לניהול תפעול הבר, העובדים והכספים." icon="dashboard" />;
 }

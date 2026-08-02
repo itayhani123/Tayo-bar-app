@@ -15,12 +15,16 @@ html {
 body {
   min-height: 100vh;
   margin: 0;
+  font-family: Arial, "Noto Sans Hebrew", sans-serif;
 }
 
 button,
 a {
   -webkit-tap-highlight-color: transparent;
 }
+
+:dir(rtl) table { text-align: right !important; }
+:dir(rtl) input, :dir(rtl) textarea, :dir(rtl) select { text-align: right; }
 
 @theme inline {
   --font-heading: var(--font-sans);

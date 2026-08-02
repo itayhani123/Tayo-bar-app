@@ -5,15 +5,15 @@ export type NavigationItem = {
 };
 
 export const navigationItems: NavigationItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
-  { href: "/calendar", label: "Calendar", icon: "calendar" },
-  { href: "/events", label: "Events", icon: "events" },
-  { href: "/employees", label: "Employees", icon: "employees" },
-  { href: "/timesheets", label: "Timesheets", icon: "timesheets" },
-  { href: "/payroll", label: "Payroll", icon: "payroll" },
-  { href: "/income", label: "Income", icon: "income" },
-  { href: "/expenses", label: "Expenses", icon: "expenses" },
-  { href: "/reports", label: "Reports", icon: "reports" },
-  { href: "/assistant", label: "AI Assistant", icon: "assistant" },
-  { href: "/settings", label: "Settings", icon: "settings" },
+  { href: "/dashboard", label: "מרכז בקרה", icon: "dashboard" },
+  { href: "/calendar", label: "לוח שנה", icon: "calendar" },
+  { href: "/events", label: "אירועים", icon: "events" },
+  { href: "/employees", label: "עובדים", icon: "employees" },
+  { href: "/timesheets", label: "שעות עבודה", icon: "timesheets" },
+  { href: "/payroll", label: "משכורות", icon: "payroll" },
+  { href: "/income", label: "הכנסות", icon: "income" },
+  { href: "/expenses", label: "הוצאות", icon: "expenses" },
+  { href: "/reports", label: "דוחות", icon: "reports" },
+  { href: "/assistant", label: "עוזר AI", icon: "assistant" },
+  { href: "/settings", label: "הגדרות", icon: "settings" },
 ];
