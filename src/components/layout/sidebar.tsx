@@ -1,5 +1,5 @@
 "use client";
-
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { navigationItems } from "@/components/layout/navigation";
@@ -12,6 +12,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
   return (
     <>
+
       <button aria-label="Close navigation" onClick={onClose} className={`fixed inset-0 z-30 bg-slate-950/35 transition-opacity lg:hidden ${isOpen ? "opacity-100" : "pointer-events-none opacity-0"}`} />
       <aside className={`fixed inset-y-0 left-0 z-40 flex w-[272px] -translate-x-full flex-col border-r border-slate-200 bg-white px-4 py-5 transition-transform duration-200 lg:translate-x-0 ${isOpen ? "translate-x-0" : ""}`}>
         <div className="flex items-center justify-between px-3">

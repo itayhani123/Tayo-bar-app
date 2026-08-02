@@ -1,0 +1,115 @@
+import { createClient } from "@/lib/supabase/client";
+import type { EventFormValues, EventRecord, VenueOption } from "../types";
+
+type EventDatabaseRow = {
+  id: string;
+  event_date: string;
+  start_time: string;
+  event_type: EventFormValues["eventType"];
+  venue_id: string;
+  client_name: string;
+  client_phone: string | null;
+  guest_count: number;
+  price_per_guest: number | string;
+  package_type: EventFormValues["packageType"];
+  payer_type: EventFormValues["payerType"];
+  payment_status: EventFormValues["paymentStatus"];
+  manager_employee_id: string | null;
+  security_check_received: boolean;
+  invoice_issued: boolean;
+  estimated_alcohol_cost: number | string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function toRecord(row: EventDatabaseRow, venueName: string): EventRecord {
+  return {
+    id: row.id, eventDate: row.event_date, startTime: row.start_time, eventType: row.event_type,
+    venueId: row.venue_id, venueName, clientName: row.client_name, clientPhone: row.client_phone ?? "",
+    guestCount: row.guest_count, pricePerGuest: Number(row.price_per_guest), packageType: row.package_type,
+    payerType: row.payer_type, paymentStatus: row.payment_status, managerEmployeeId: row.manager_employee_id ?? "",
+    securityCheckReceived: row.security_check_received, invoiceIssued: row.invoice_issued,
+    estimatedAlcoholCost: Number(row.estimated_alcohol_cost), notes: row.notes ?? "", createdAt: row.created_at, updatedAt: row.updated_at,
+  };
+}
+
+function toPayload(values: EventFormValues) {
+  return {
+    event_date: values.eventDate, start_time: values.startTime, event_type: values.eventType, venue_id: values.venueId,
+    client_name: values.clientName.trim(), client_phone: values.clientPhone.trim() || null, guest_count: values.guestCount,
+    price_per_guest: values.pricePerGuest, package_type: values.packageType, payer_type: values.payerType,
+    payment_status: values.paymentStatus, manager_employee_id: values.managerEmployeeId || null,
+    security_check_received: values.securityCheckReceived, invoice_issued: values.invoiceIssued,
+    estimated_alcohol_cost: values.estimatedAlcoholCost, notes: values.notes.trim() || null,
+  };
+}
+
+async function venueNames() {
+  const { data, error } = await createClient().from("venues").select("id, name");
+  if (error) {
+  console.error("Supabase Venues Error:", error);
+  throw error;
+}
+  return new Map((data as VenueOption[]).map((venue) => [venue.id, venue.name]));
+}
+
+export async function listVenues(): Promise<VenueOption[]> {
+  const { data, error } = await createClient().from("venues").select("id, name").order("name");
+  if (error) throw error;
+  return data as VenueOption[];
+}
+
+export async function listEvents(): Promise<EventRecord[]> {
+  try {
+    const [{ data, error }, names] = await Promise.all([
+      createClient()
+        .from("events")
+        .select("*")
+        .order("event_date")
+        .order("start_time"),
+      venueNames(),
+    ]);
+
+    console.log("Events error:", error);
+    console.log("Events data:", data);
+    console.log("Venue names:", names);
+
+    if (error) {
+  console.error("Supabase Events Error:", error);
+  throw error;
+}
+
+    return (data as EventDatabaseRow[]).map((event) =>
+      toRecord(event, names.get(event.venue_id) ?? "Unknown venue")
+    );
+  } catch (e) {
+    console.error("LIST EVENTS FAILED:", e);
+    throw e;
+  }
+}
+
+export async function getEvent(id: string): Promise<EventRecord> {
+  const [{ data, error }, names] = await Promise.all([createClient().from("events").select("*").eq("id", id).single(), venueNames()]);
+  if (error) throw error;
+  return toRecord(data as EventDatabaseRow, names.get((data as EventDatabaseRow).venue_id) ?? "Unknown venue");
+}
+
+export async function createEvent(values: EventFormValues): Promise<EventRecord> {
+  const { data, error } = await createClient().from("events").insert(toPayload(values)).select().single();
+  if (error) throw error;
+  const row = data as EventDatabaseRow;
+  return toRecord(row, (await venueNames()).get(row.venue_id) ?? "Unknown venue");
+}
+
+export async function updateEvent(id: string, values: EventFormValues): Promise<EventRecord> {
+  const { data, error } = await createClient().from("events").update(toPayload(values)).eq("id", id).select().single();
+  if (error) throw error;
+  const row = data as EventDatabaseRow;
+  return toRecord(row, (await venueNames()).get(row.venue_id) ?? "Unknown venue");
+}
+
+export async function deleteEvent(id: string): Promise<void> {
+  const { error } = await createClient().from("events").delete().eq("id", id);
+  if (error) throw error;
+}
