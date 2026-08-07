@@ -62,12 +62,12 @@ export async function listVenues(): Promise<VenueOption[]> {
   return data as VenueOption[];
 }
 
-export async function listEvents(): Promise<EventRecord[]> {
+export async function listEvents(includeFinancials = true): Promise<EventRecord[]> {
   try {
     const [{ data, error }, names] = await Promise.all([
       createClient()
         .from("events")
-        .select("*")
+        .select(includeFinancials ? "*" : "id, event_date, start_time, event_type, venue_id, client_name, client_phone, guest_count, package_type, security_check_received, invoice_issued, manager_employee_id, notes, created_at, updated_at")
         .order("event_date")
         .order("start_time"),
       venueNames(),
@@ -82,7 +82,7 @@ export async function listEvents(): Promise<EventRecord[]> {
   throw error;
 }
 
-    return (data as EventDatabaseRow[]).map((event) =>
+    return (data as unknown as EventDatabaseRow[]).map((event) =>
       toRecord(event, names.get(event.venue_id) ?? "Unknown venue")
     );
   } catch (e) {
@@ -103,13 +103,20 @@ export async function createEvent(values: EventFormValues): Promise<EventRecord>
   const row = data as EventDatabaseRow;
   return toRecord(row, (await venueNames()).get(row.venue_id) ?? "Unknown venue");
 }
+export async function createOperationalEvent(values: EventFormValues): Promise<void> { const payload = { event_date: values.eventDate, start_time: values.startTime, event_type: values.eventType, venue_id: values.venueId, client_name: values.clientName.trim(), client_phone: values.clientPhone.trim() || null, guest_count: values.guestCount, package_type: values.packageType, payer_type: "client", payment_status: "unpaid", manager_employee_id: values.managerEmployeeId || null, security_check_received: false, invoice_issued: false, notes: values.notes.trim() || null }; const { error } = await createClient().from("events").insert(payload); if (error) throw error; }
 
 export async function updateEvent(id: string, values: EventFormValues): Promise<EventRecord> {
-  const { data, error } = await createClient().from("events").update(toPayload(values)).eq("id", id).select().single();
+  const supabase = createClient();
+  const { data: previous, error: previousError } = await supabase.from("events").select("event_date, start_time").eq("id", id).single();
+  if (previousError) throw previousError;
+  const { data, error } = await supabase.from("events").update(toPayload(values)).eq("id", id).select().single();
   if (error) throw error;
+  if (previous.event_date !== values.eventDate || previous.start_time.slice(0, 5) !== values.startTime.slice(0, 5)) await notifyEventChanged(id);
   const row = data as EventDatabaseRow;
   return toRecord(row, (await venueNames()).get(row.venue_id) ?? "Unknown venue");
 }
+
+export async function updateOperationalEvent(id: string, values: EventFormValues): Promise<void> { const supabase = createClient(); const { data: previous, error: previousError } = await supabase.from("events").select("event_date, start_time").eq("id", id).single(); if (previousError) throw previousError; const payload = { event_date: values.eventDate, start_time: values.startTime, event_type: values.eventType, venue_id: values.venueId, client_name: values.clientName.trim(), client_phone: values.clientPhone.trim() || null, guest_count: values.guestCount, package_type: values.packageType, manager_employee_id: values.managerEmployeeId || null, notes: values.notes.trim() || null }; const { error } = await supabase.from("events").update(payload).eq("id", id); if (error) throw error; if (previous.event_date !== values.eventDate || previous.start_time.slice(0, 5) !== values.startTime.slice(0, 5)) await notifyEventChanged(id); }
 
 export async function deleteEvent(id: string): Promise<void> {
   const { error } = await createClient().from("events").delete().eq("id", id);
@@ -117,6 +124,17 @@ export async function deleteEvent(id: string): Promise<void> {
 }
 
 export async function updateEventSchedule(id: string, eventDate: string, startTime: string): Promise<void> {
-  const { error } = await createClient().from("events").update({ event_date: eventDate, start_time: startTime }).eq("id", id);
+  const supabase = createClient();
+  const { data: previous, error: previousError } = await supabase.from("events").select("event_date, start_time").eq("id", id).single();
+  if (previousError) throw previousError;
+  const { error } = await supabase.from("events").update({ event_date: eventDate, start_time: startTime }).eq("id", id);
   if (error) throw error;
+  if (previous.event_date !== eventDate || previous.start_time.slice(0, 5) !== startTime.slice(0, 5)) await notifyEventChanged(id);
+}
+
+async function notifyEventChanged(eventId: string) {
+  try {
+    const response = await fetch("/api/whatsapp/trigger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "event_changed", eventId }) });
+    if (!response.ok) console.warn("WhatsApp notification warning:", await response.text());
+  } catch (error) { console.warn("WhatsApp notification warning:", error); }
 }

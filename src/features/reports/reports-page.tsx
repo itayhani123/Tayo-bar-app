@@ -9,7 +9,7 @@ import { formatMoney } from "@/lib/hebrew";
 
 export function ReportsPage({ isManager }: { isManager: boolean }) {
   const [month, setMonth] = useState(currentMonth());
-  const query = useDashboard(month);
+  const query = useDashboard(month, !isManager);
   const taxRate = useIncomeTaxAdvanceRate(!isManager);
   if (isManager) return <div><h2 className="text-2xl font-semibold">דוחות</h2><p className="mt-3 text-sm text-muted-foreground">המידע הפיננסי זמין לבעלים בלבד.</p></div>;
   if (query.isLoading) return <div className="h-64 animate-pulse rounded-xl bg-muted" />;

@@ -1,2 +1,3 @@
 import { MasterDataPage } from "@/features/master-data";
-export default function PaymentMethodsPage() { return <MasterDataPage kind="payment_methods" />; }
+import { requireOwner } from "@/lib/auth/user";
+export default async function PaymentMethodsPage() { await requireOwner(); return <MasterDataPage kind="payment_methods" />; }

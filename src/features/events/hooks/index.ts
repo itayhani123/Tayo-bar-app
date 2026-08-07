@@ -1,1 +1,1 @@
-export { useCreateEvent, useDeleteEvent, useEvents, useUpdateEvent, useUpdateEventSchedule, useVenues } from "./use-events";
+export { useCreateEvent, useCreateOperationalEvent, useDeleteEvent, useEvents, useUpdateEvent, useUpdateEventSchedule, useUpdateOperationalEvent, useVenues } from "./use-events";

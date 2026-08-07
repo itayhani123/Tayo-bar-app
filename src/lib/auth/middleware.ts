@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
+import { isUnauthenticatedServerRoute } from "@/lib/auth/public-routes";
 
 function redirectWithSessionCookies(url: URL, response: NextResponse) {
   const redirectResponse = NextResponse.redirect(url);
@@ -9,8 +10,10 @@ function redirectWithSessionCookies(url: URL, response: NextResponse) {
 
 /** Applies session refresh and route-access rules in the Next.js Proxy. */
 export async function updateAuthSession(request: NextRequest) {
-  const { response, claims } = await updateSession(request);
   const { pathname } = request.nextUrl;
+  if (isUnauthenticatedServerRoute(pathname)) return NextResponse.next({ request });
+
+  const { response, claims } = await updateSession(request);
 
   if (!claims && pathname !== "/login") {
     return redirectWithSessionCookies(new URL("/login", request.url), response);

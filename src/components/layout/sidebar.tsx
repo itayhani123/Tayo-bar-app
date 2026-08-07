@@ -4,10 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { navigationItems } from "@/components/layout/navigation";
 import { Icon } from "@/components/ui/icon";
+import type { AppRole } from "@/lib/auth/user";
 
-type SidebarProps = { isOpen: boolean; onClose: () => void };
+type SidebarProps = { isOpen: boolean; onClose: () => void; role: AppRole };
 
-export function Sidebar({ isOpen, onClose }: SidebarProps) {
+export function Sidebar({ isOpen, onClose, role }: SidebarProps) {
   const pathname = usePathname();
 
   return (
@@ -23,7 +24,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           <button aria-label="סגירת ניווט" onClick={onClose} className="grid size-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 lg:hidden"><Icon name="close" className="size-5" /></button>
         </div>
         <nav aria-label="ניווט ראשי" className="mt-10 flex flex-1 flex-col gap-1">
-          {navigationItems.map((item) => {
+          {navigationItems.filter((item) => item.roles.includes(role)).map((item) => {
             const active = pathname === item.href;
             return <Link key={item.href} href={item.href} onClick={onClose} className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${active ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"}`}><Icon name={item.icon} className="size-5" />{item.label}</Link>;
           })}

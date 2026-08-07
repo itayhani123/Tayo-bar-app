@@ -22,7 +22,7 @@ const emptyFilters: CalendarFilters = { venueId: "", eventType: "", paymentStatu
 
 export function CalendarPage({ access }: { access: CalendarAccess }) {
   const calendarRef = useRef<FullCalendar>(null);
-  const { events, staffing } = useCalendarData();
+  const { events, staffing } = useCalendarData(access === "owner");
   const venues = useVenues();
   const eventTypes = useMasterData("event_types");
   const packages = useMasterData("bar_packages");
@@ -43,8 +43,8 @@ export function CalendarPage({ access }: { access: CalendarAccess }) {
   const dateClick = (arg: DateClickArg) => openNew({ eventDate: localDate(arg.date), startTime: arg.allDay ? "" : localTime(arg.date) });
   const eventClick = (arg: EventClickArg) => setEditing((arg.event.extendedProps.record as CalendarEvent));
   const eventDrop = async (arg: EventDropArg) => { const start = arg.event.start; if (!start) return arg.revert(); try { await scheduleMutation.mutateAsync({ id: arg.event.id, eventDate: localDate(start), startTime: localTime(start) }); showSuccess("מועד האירוע עודכן בהצלחה."); } catch { arg.revert(); showError("לא ניתן לעדכן את מועד האירוע. השינוי בוטל."); } };
-  const eventMount = (arg: EventMountArg) => { const event = arg.event.extendedProps.record as CalendarEvent; arg.el.title = `${event.venueName}\n${translateStoredValue(event.eventType)}\n${event.clientName}\n${event.guestCount} אורחים\n${event.assignedCount} עובדים משובצים\n${event.recommendedBartenders} ברמנים מומלצים\n${paymentStatusLabels[event.paymentStatus]}`; };
-  const eventContent = (arg: EventContentArg) => { const record = arg.event.extendedProps.record as CalendarEvent; return <div className="min-w-0 px-1 py-0.5"><div className="truncate font-medium">{arg.timeText ? `${arg.timeText} · ` : ""}{arg.event.title}</div><span className="mt-0.5 inline-flex rounded-full bg-black/20 px-1.5 py-0.5 text-[10px] leading-none">{paymentStatusLabels[record.paymentStatus]}</span></div>; };
+  const eventMount = (arg: EventMountArg) => { const event = arg.event.extendedProps.record as CalendarEvent; arg.el.title = `${event.venueName}\n${translateStoredValue(event.eventType)}\n${event.clientName}\n${event.guestCount} אורחים\n${event.assignedCount} עובדים משובצים\n${event.recommendedBartenders} ברמנים מומלצים${access === "owner" ? `\n${paymentStatusLabels[event.paymentStatus]}` : ""}`; };
+  const eventContent = (arg: EventContentArg) => { const record = arg.event.extendedProps.record as CalendarEvent; return <div className="min-w-0 px-1 py-0.5"><div className="truncate font-medium">{arg.timeText ? `${arg.timeText} · ` : ""}{arg.event.title}</div>{access === "owner" && <span className="mt-0.5 inline-flex rounded-full bg-black/20 px-1.5 py-0.5 text-[10px] leading-none">{paymentStatusLabels[record.paymentStatus]}</span>}</div>; };
 
   if (loading) return <CalendarSkeleton />;
   if (failed) return <ErrorState onRetry={() => { events.refetch(); staffing.refetch(); venues.refetch(); eventTypes.refetch(); packages.refetch(); }} />;

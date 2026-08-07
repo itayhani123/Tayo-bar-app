@@ -6,31 +6,36 @@ import { useForm } from "react-hook-form";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EventStaffingSection } from "@/features/event-staffing";
+import { EventPaymentsSection } from "@/features/event-payments";
+import { calculateVat } from "@/lib/finance/calculations";
 import { formatMoney, payerLabels, paymentStatusLabels, translateStoredValue } from "@/lib/hebrew";
-import { useCreateEvent, useUpdateEvent } from "../hooks";
+import { useCreateEvent, useCreateOperationalEvent, useUpdateEvent, useUpdateOperationalEvent } from "../hooks";
 import type { EventFormValues, EventRecord, VenueOption } from "../types";
 import { PAYER_TYPES, PAYMENT_STATUSES } from "../types";
 import { eventSchema } from "../validation";
 
 type Props = { event: EventRecord | null; initialValues?: Partial<EventFormValues>; showFinancials?: boolean; venues: VenueOption[]; eventTypes: string[]; packages: string[]; onClose: () => void; onSuccess: (message: string) => void; onError: (message: string) => void };
 
-const emptyValues: EventFormValues = { eventDate: "", startTime: "", venueId: "", clientName: "", clientPhone: "", guestCount: 0, eventType: "Wedding", packageType: "Pouring", pricePerGuest: 0, vatRate: 18, priceIncludesVat: false, payerType: "client", paymentStatus: "unpaid", estimatedAlcoholCost: 0, securityCheckReceived: false, invoiceIssued: false, managerEmployeeId: "", notes: "" };
+const emptyValues: EventFormValues = { eventDate: "", startTime: "", venueId: "", clientName: "", clientPhone: "", guestCount: 0, eventType: "Wedding", packageType: "Pouring", pricePerGuest: 0, vatRate: 18, priceIncludesVat: true, payerType: "client", paymentStatus: "unpaid", estimatedAlcoholCost: 0, securityCheckReceived: false, invoiceIssued: false, managerEmployeeId: "", notes: "" };
 const fieldClass = "mt-1.5 h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:border-ring focus:ring-3 focus:ring-ring/20";
 const labelClass = "block text-sm font-medium text-foreground";
 
 export function EventFormDialog({ event, initialValues, showFinancials = true, venues, eventTypes, packages, onClose, onSuccess, onError }: Props) {
   const createMutation = useCreateEvent();
+  const operationalCreateMutation = useCreateOperationalEvent();
   const updateMutation = useUpdateEvent();
+  const operationalUpdateMutation = useUpdateOperationalEvent();
   const form = useForm<EventFormValues>({ resolver: zodResolver(eventSchema), defaultValues: event ?? { ...emptyValues, ...initialValues } });
   const { register, handleSubmit, reset, watch, formState: { errors } } = form;
   const revenue = (watch("guestCount") || 0) * (watch("pricePerGuest") || 0);
-  const isSaving = createMutation.isPending || updateMutation.isPending;
+  const grossRevenue = calculateVat({ guestCount: watch("guestCount") || 0, pricePerGuest: watch("pricePerGuest") || 0, vatRate: watch("vatRate") || 0, priceIncludesVat: watch("priceIncludesVat") }).grossRevenue;
+  const isSaving = createMutation.isPending || operationalCreateMutation.isPending || updateMutation.isPending || operationalUpdateMutation.isPending;
 
   useEffect(() => { reset(event ?? { ...emptyValues, ...initialValues }); }, [event, initialValues, reset]);
 
   const submit = async (values: EventFormValues) => {
     try {
-      if (event) await updateMutation.mutateAsync({ id: event.id, values }); else await createMutation.mutateAsync(values);
+      if (event) { if (showFinancials) await updateMutation.mutateAsync({ id: event.id, values }); else await operationalUpdateMutation.mutateAsync({ id: event.id, values }); } else if (showFinancials) await createMutation.mutateAsync(values); else await operationalCreateMutation.mutateAsync(values);
       onSuccess(event ? "האירוע עודכן בהצלחה." : "האירוע נוצר בהצלחה.");
       onClose();
     } catch { onError("לא ניתן לשמור את האירוע. נסו שוב."); }
@@ -44,7 +49,7 @@ export function EventFormDialog({ event, initialValues, showFinancials = true, v
     <FormSection title="צוות"><Field label="מזהה מנהל (אופציונלי)" error={message("managerEmployeeId")}><input placeholder="UUID של העובד" className={fieldClass} {...register("managerEmployeeId")} /></Field></FormSection>
     <FormSection title="הערות"><label className={labelClass}>הערות<textarea className="mt-1.5 min-h-28 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-3 focus:ring-ring/20" {...register("notes")} /></label>{message("notes") && <p className="mt-1 text-xs text-destructive">{message("notes")}</p>}</FormSection>
     <div className="flex justify-end gap-2 border-t border-border pt-5"><Button type="button" variant="outline" onClick={onClose}>ביטול</Button><Button type="submit" disabled={isSaving}>{isSaving ? "שומר..." : event ? "שמירת שינויים" : "יצירת אירוע"}</Button></div>
-  </form>{event && <div className="px-5 pb-6"><EventStaffingSection eventId={event.id} eventDate={watch("eventDate")} guestCount={watch("guestCount") || 0} pricePerGuest={watch("pricePerGuest") || 0} vatRate={watch("vatRate") || 0} priceIncludesVat={watch("priceIncludesVat")} estimatedAlcoholCost={watch("estimatedAlcoholCost") || 0} showFinancials={showFinancials} onSuccess={onSuccess} onError={onError} /></div>}</div></div>;
+  </form>{event && <div className="space-y-7 px-5 pb-6"><EventStaffingSection eventId={event.id} eventDate={watch("eventDate")} guestCount={watch("guestCount") || 0} pricePerGuest={watch("pricePerGuest") || 0} vatRate={watch("vatRate") || 0} priceIncludesVat={watch("priceIncludesVat")} estimatedAlcoholCost={watch("estimatedAlcoholCost") || 0} showFinancials={showFinancials} onSuccess={onSuccess} onError={onError} />{showFinancials && <EventPaymentsSection eventId={event.id} totalDue={grossRevenue} onSuccess={onSuccess} onError={onError} />}</div>}</div></div>;
 }
 
 function FormSection({ title, children }: { title: string; children: React.ReactNode }) { return <section><h3 className="mb-4 text-sm font-semibold text-foreground">{title}</h3><div className="grid gap-4 sm:grid-cols-2">{children}</div></section>; }

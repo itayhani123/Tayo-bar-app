@@ -1,0 +1,2 @@
+import type { RawReceivableEvent } from "../utils/receivables-calculations";
+export async function listReceivables(): Promise<RawReceivableEvent[]> { const response = await fetch("/api/receivables"); const body = await response.json() as RawReceivableEvent[] | { error?: string }; if (!response.ok) throw new Error("error" in body ? body.error ?? "לא ניתן לטעון יתרות לגבייה" : "לא ניתן לטעון יתרות לגבייה"); return body as RawReceivableEvent[]; }

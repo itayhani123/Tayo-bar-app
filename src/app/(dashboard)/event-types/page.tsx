@@ -1,2 +1,3 @@
 import { MasterDataPage } from "@/features/master-data";
-export default function EventTypesPage() { return <MasterDataPage kind="event_types" />; }
+import { requireOwner } from "@/lib/auth/user";
+export default async function EventTypesPage() { await requireOwner(); return <MasterDataPage kind="event_types" />; }

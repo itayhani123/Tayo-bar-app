@@ -1,2 +1,3 @@
 import { MasterDataPage } from "@/features/master-data";
-export default function BarPackagesPage() { return <MasterDataPage kind="bar_packages" />; }
+import { requireOwner } from "@/lib/auth/user";
+export default async function BarPackagesPage() { await requireOwner(); return <MasterDataPage kind="bar_packages" />; }

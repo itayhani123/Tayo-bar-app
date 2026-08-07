@@ -4,16 +4,16 @@ import type { AssignmentFormValues, EventAssignment, EventRole, PayType } from "
 type AssignmentRow = { id: string; event_id: string; employee_id: string; event_role: EventRole; pay_type: PayType; hourly_rate: number | string | null; fixed_pay: number | string | null; work_start: string | null; work_end: string | null; notes: string | null; created_at: string; updated_at: string };
 type EmployeeRow = { id: string; full_name: string; phone: string | null };
 
-export async function listEventAssignments(eventId: string): Promise<EventAssignment[]> {
+export async function listEventAssignments(eventId: string, includeFinancials = true): Promise<EventAssignment[]> {
   const supabase = createClient();
   const [{ data, error }, employeesResult] = await Promise.all([
-    supabase.from("event_assignments").select("*").eq("event_id", eventId).order("created_at"),
+    supabase.from("event_assignments").select(includeFinancials ? "id, event_id, employee_id, event_role, pay_type, hourly_rate, fixed_pay, work_start, work_end, notes, created_at, updated_at" : "id, event_id, employee_id, event_role, work_start, work_end, notes, created_at, updated_at").eq("event_id", eventId).order("created_at"),
     supabase.from("employees").select("id, full_name, phone"),
   ]);
   if (error) throw error;
   if (employeesResult.error) throw employeesResult.error;
   const employees = new Map((employeesResult.data as EmployeeRow[]).map((employee) => [employee.id, employee]));
-  return (data as AssignmentRow[]).map((row) => {
+  return (data as unknown as AssignmentRow[]).map((row) => {
     const employee = employees.get(row.employee_id);
     return { id: row.id, eventId: row.event_id, employeeId: row.employee_id, employeeName: employee?.full_name ?? "עובד לא ידוע", employeePhone: employee?.phone ?? "", eventRole: row.event_role, payType: row.pay_type, hourlyRate: row.hourly_rate === null ? null : Number(row.hourly_rate), fixedPay: row.fixed_pay === null ? null : Number(row.fixed_pay), workStart: row.work_start, workEnd: row.work_end, notes: row.notes ?? "", createdAt: row.created_at, updatedAt: row.updated_at };
   });
@@ -26,20 +26,26 @@ export async function createEventAssignment(eventId: string, eventDate: string, 
   if (existing) throw new Error("employee_already_assigned");
   const times = assignmentTimes(eventDate, values.workStart, values.workEnd);
   const payload = { event_id: eventId, employee_id: values.employeeId, event_role: values.eventRole, role: values.eventRole, is_manager: values.eventRole === "manager", pay_type: values.payType, hourly_rate: values.payType === "hourly" ? values.hourlyRate : null, fixed_pay: values.payType === "fixed" ? values.fixedPay : null, work_start: times.workStart, work_end: times.workEnd, notes: values.notes.trim() || null };
-  const { error } = await supabase.from("event_assignments").insert(payload);
+  const { data, error } = await supabase.from("event_assignments").insert(payload).select("id").single();
   if (error) throw error;
+  await notifyBestEffort({ action: "assignment_created", assignmentId: data.id });
 }
 
 export async function updateEventAssignment(id: string, eventDate: string, values: AssignmentFormValues): Promise<void> {
+  const supabase = createClient();
+  const { data: previous, error: previousError } = await supabase.from("event_assignments").select("work_start, work_end").eq("id", id).single();
+  if (previousError) throw previousError;
   const times = assignmentTimes(eventDate, values.workStart, values.workEnd);
   const payload = { event_role: values.eventRole, role: values.eventRole, is_manager: values.eventRole === "manager", pay_type: values.payType, hourly_rate: values.payType === "hourly" ? values.hourlyRate : null, fixed_pay: values.payType === "fixed" ? values.fixedPay : null, work_start: times.workStart, work_end: times.workEnd, notes: values.notes.trim() || null };
-  const { error } = await createClient().from("event_assignments").update(payload).eq("id", id);
+  const { error } = await supabase.from("event_assignments").update(payload).eq("id", id);
   if (error) throw error;
+  if (times.workStart && times.workEnd && (previous.work_start !== times.workStart || previous.work_end !== times.workEnd)) await notifyBestEffort({ action: "work_time_updated", assignmentId: id });
 }
 
 export async function deleteEventAssignment(id: string): Promise<void> {
   const { error } = await createClient().from("event_assignments").delete().eq("id", id);
   if (error) throw error;
+  await notifyBestEffort({ action: "assignment_removed", assignmentId: id });
 }
 
 function assignmentTimes(eventDate: string, startValue: string, endValue: string) {
@@ -47,4 +53,11 @@ function assignmentTimes(eventDate: string, startValue: string, endValue: string
   const end = endValue ? new Date(`${eventDate}T${endValue}:00`) : null;
   if (start && end && end <= start) end.setDate(end.getDate() + 1);
   return { workStart: start?.toISOString() ?? null, workEnd: end?.toISOString() ?? null };
+}
+
+async function notifyBestEffort(body: { action: string; assignmentId: string }) {
+  try {
+    const response = await fetch("/api/whatsapp/trigger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!response.ok) console.warn("WhatsApp notification warning:", await response.text());
+  } catch (error) { console.warn("WhatsApp notification warning:", error); }
 }
