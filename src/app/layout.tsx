@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   },
 };
 
-export const viewport: Viewport = { themeColor: "#4f46e5", viewportFit: "cover" };
+export const viewport: Viewport = { themeColor: "#000000", viewportFit: "cover" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return <html lang="he" dir="rtl" className="font-sans"><head><meta name="apple-mobile-web-app-capable" content="yes" /></head><body><QueryProvider>{children}</QueryProvider><PwaProvider /></body></html>;

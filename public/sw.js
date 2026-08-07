@@ -1,4 +1,4 @@
-const CACHE_VERSION = "tayo-static-v1";
+const CACHE_VERSION = "tayo-static-v2";
 const OFFLINE_URL = "/offline";
 const PRECACHE_URLS = [OFFLINE_URL, "/logo.png", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-maskable-192.png", "/icons/icon-maskable-512.png", "/apple-touch-icon.png"];
 

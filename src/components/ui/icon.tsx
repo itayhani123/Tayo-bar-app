@@ -1,6 +1,6 @@
 import type { NavigationItem } from "@/components/layout/navigation";
 
-type IconName = NavigationItem["icon"] | "menu" | "close" | "bell" | "chevron";
+type IconName = NavigationItem["icon"] | "menu" | "close" | "bell" | "chevron" | "logout";
 
 const paths: Record<IconName, React.ReactNode> = {
   dashboard: <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>,
@@ -18,6 +18,7 @@ const paths: Record<IconName, React.ReactNode> = {
   close: <path d="M5 5l14 14M19 5L5 19" />,
   bell: <><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>,
   chevron: <path d="m9 18 6-6-6-6" />,
+  logout: <><path d="M10 5H5v14h5" /><path d="M13 8l4 4-4 4M17 12H9" /></>,
 };
 
 export function Icon({ name, className = "" }: { name: IconName; className?: string }) {

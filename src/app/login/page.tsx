@@ -14,12 +14,12 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
       <section className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-7 shadow-sm sm:p-8">
         <div className="mb-8 text-center">
  
-          <div className="w-32 h-auto" ><Image
+          <div className="mx-auto w-40" ><Image
   src="/logo.png"
   alt="TAYO"
-  width={180}
-  height={180}
-  className="w-40 h-auto"
+  width={550}
+  height={303}
+  className="h-auto w-full"
   priority
 /></div>
           
@@ -29,11 +29,11 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <form action={signIn} className="space-y-5">
           <label className="block text-sm font-medium text-slate-700">
             אימייל
-            <input name="email" type="email" autoComplete="email" required className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-950 outline-none transition focus:border-indigo-500 focus:ring-3 focus:ring-indigo-100" />
+            <input name="email" type="email" autoComplete="email" required className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-950 outline-none transition focus:border-black focus:ring-3 focus:ring-slate-200" />
           </label>
           <label className="block text-sm font-medium text-slate-700">
             סיסמה
-            <input name="password" type="password" autoComplete="current-password" required className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-950 outline-none transition focus:border-indigo-500 focus:ring-3 focus:ring-indigo-100" />
+            <input name="password" type="password" autoComplete="current-password" required className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-950 outline-none transition focus:border-black focus:ring-3 focus:ring-slate-200" />
           </label>
           {errorMessage ? <p role="alert" className="rounded-lg bg-red-50 px-3 py-2.5 text-sm text-red-700">{errorMessage}</p> : null}
           <LoginSubmitButton />
