@@ -21,7 +21,9 @@ export function PwaProvider() {
     const dismissedAt = Number(window.localStorage.getItem(DISMISS_KEY) ?? 0);
     const maySuggestInstall = !isStandalone() && Date.now() - dismissedAt > DISMISS_FOR_MS;
     const ua = navigator.userAgent;
-    setShowIosHelp(maySuggestInstall && /iPhone|iPad|iPod/.test(ua) && /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua));
+    const isIosDevice = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    const isIosSafari = isIosDevice && /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+    setShowIosHelp(maySuggestInstall && isIosSafari);
     setIsOffline(!navigator.onLine);
     const onInstallPrompt = (event: Event) => { event.preventDefault(); if (maySuggestInstall) setInstallPrompt(event as BeforeInstallPromptEvent); };
     const onOnline = () => setIsOffline(false);
@@ -38,7 +40,8 @@ export function PwaProvider() {
           worker?.addEventListener("statechange", () => { if (worker.state === "installed" && navigator.serviceWorker.controller) setWaitingWorker(worker); });
         });
       }).catch((error: unknown) => console.error("PWA registration failed", error));
-      window.addEventListener("load", register, { once: true });
+      if (document.readyState === "complete") void register();
+      else window.addEventListener("load", register, { once: true });
     }
     return () => { window.removeEventListener("beforeinstallprompt", onInstallPrompt); window.removeEventListener("online", onOnline); window.removeEventListener("offline", onOffline); };
   }, []);
