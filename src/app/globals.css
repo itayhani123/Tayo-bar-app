@@ -163,3 +163,24 @@ a {
     @apply font-sans;
   }
 }
+
+.safe-area-header {
+  padding-top: env(safe-area-inset-top);
+  height: calc(4rem + env(safe-area-inset-top));
+}
+
+.safe-area-content {
+  padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+}
+
+@media (min-width: 64rem) {
+  .safe-area-header {
+    height: calc(73px + env(safe-area-inset-top));
+  }
+}
+
+@media (display-mode: standalone) {
+  html, body {
+    min-height: 100dvh;
+  }
+}

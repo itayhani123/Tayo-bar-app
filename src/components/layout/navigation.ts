@@ -20,3 +20,4 @@ export const navigationItems: NavigationItem[] = [
   { href: "/event-types", label: "סוגי אירועים", icon: "settings", roles: owner },
   { href: "/payment-methods", label: "אמצעי תשלום", icon: "settings", roles: owner },
 ];
+export const navigationItemsForRole = (role: AppRole) => navigationItems.filter((item) => item.roles.includes(role));
