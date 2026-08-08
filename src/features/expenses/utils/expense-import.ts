@@ -1,0 +1,10 @@
+import type { ExpenseFormValues } from "../types";
+import { expenseSchema } from "../validation";
+import { normalizeHeader,parseCurrency,parseExcelDate } from "./expense-import-parsing";
+export { normalizeHeader,parseCurrency,parseExcelDate,possibleDuplicate } from "./expense-import-parsing";
+export const IMPORT_FIELDS=["expenseDate","category","supplierName","description","amount","includesVat","vatRate","paymentMethod","referenceNumber","eventId","notes"] as const;
+export type ImportField=typeof IMPORT_FIELDS[number]; export type ColumnMapping=Partial<Record<ImportField,number>>;
+const aliases:Record<ImportField,string[]>={expenseDate:["תאריך","תאריך הוצאה"],category:["קטגוריה"],supplierName:["ספק","שם ספק"],description:["תיאור","פרטים"],amount:["סכום","סהכ","סך הכל"],includesVat:["כולל מעמ","מעמ"],vatRate:["שיעור מעמ"],paymentMethod:["אמצעי תשלום"],referenceNumber:["אסמכתא","מספר חשבונית"],eventId:["אירוע"],notes:["הערות"]};
+export function inferMapping(headers:unknown[]):ColumnMapping{const normalized=headers.map(normalizeHeader);const result:ColumnMapping={};for(const field of IMPORT_FIELDS){const index=normalized.findIndex(h=>aliases[field].includes(h));if(index>=0)result[field]=index;}return result;}
+export function mapExpenseRow(row:unknown[],mapping:ColumnMapping):ExpenseFormValues{const get=(field:ImportField)=>mapping[field]===undefined?null:row[mapping[field]!];const vatText=normalizeHeader(get("includesVat"));return {expenseDate:parseExcelDate(get("expenseDate"))??"",category:String(get("category")??"").trim(),supplierName:String(get("supplierName")??"").trim(),description:String(get("description")??"").trim(),amount:parseCurrency(get("amount"))??Number.NaN,includesVat:!["לא","false","0"].includes(vatText),vatRate:parseCurrency(get("vatRate"))??18,paymentMethod:String(get("paymentMethod")??"").trim(),referenceNumber:String(get("referenceNumber")??"").trim(),eventId:"",notes:[String(get("notes")??"").trim(),get("eventId")?`אירוע מקור: ${String(get("eventId"))}`:""].filter(Boolean).join("\n")};}
+export const validateImportRow=(value:ExpenseFormValues)=>expenseSchema.safeParse(value);

@@ -1,0 +1,2 @@
+import type { RawReceivableEvent } from "@/features/receivables/utils/receivables-calculations";
+export async function listIncomeEvents():Promise<RawReceivableEvent[]>{const response=await fetch("/api/receivables?includeForecast=true");const body=await response.json() as RawReceivableEvent[]|{error?:string};if(!response.ok)throw new Error("error" in body?body.error??"לא ניתן לטעון הכנסות":"לא ניתן לטעון הכנסות");return body as RawReceivableEvent[];}

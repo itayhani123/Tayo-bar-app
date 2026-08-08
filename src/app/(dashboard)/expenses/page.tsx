@@ -1,7 +1,7 @@
-import { PlaceholderPage } from "@/components/ui/placeholder-page";
+import { ExpensesPage } from "@/features/expenses";
 import { requireOwner } from "@/lib/auth/user";
 
-export default async function ExpensesPage() {
+export default async function ExpensesRoute() {
   await requireOwner();
-  return <PlaceholderPage title="הוצאות" description="ארגון עלויות התפעול והכנתן לתהליכי העבודה הכספיים." icon="expenses" />;
+  return <ExpensesPage />;
 }

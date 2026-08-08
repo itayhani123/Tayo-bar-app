@@ -1,7 +1,7 @@
-import { PlaceholderPage } from "@/components/ui/placeholder-page";
+import { IncomePage } from "@/features/income";
 import { requireOwner } from "@/lib/auth/user";
 
-export default async function IncomePage() {
+export default async function IncomeRoute() {
   await requireOwner();
-  return <PlaceholderPage title="הכנסות" description="מעקב אחר הכנסות בתצוגה ייעודית לרשומות הכספיות." icon="income" />;
+  return <IncomePage />;
 }

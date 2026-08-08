@@ -1,0 +1,1 @@
+"use client";import { useQuery } from "@tanstack/react-query";import { listIncomeEvents } from "../services/income-service";export const useIncome=()=>useQuery({queryKey:["income-events"],queryFn:listIncomeEvents});

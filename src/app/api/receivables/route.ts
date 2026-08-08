@@ -6,12 +6,15 @@ type EventRow = { id: string; event_date: string; event_type: string; venue_id: 
 type VenueRow = { id: string; name: string };
 type PaymentRow = { event_id: string; amount: number | string; paid_at: string; payment_method: string };
 
-export async function GET() {
+export async function GET(request: Request) {
   try { await assertOwner(); } catch { return Response.json({ error: "Unauthorized" }, { status: 403 }); }
   const supabase = await createClient();
   const today = getIsraelDateOnly();
+  const includeForecast = new URL(request.url).searchParams.get("includeForecast") === "true";
+  let eventsQuery = supabase.from("events").select("id, event_date, event_type, venue_id, client_name, client_phone, payer_type, guest_count, price_per_guest, vat_rate, price_includes_vat, notes").order("event_date");
+  if (!includeForecast) eventsQuery = eventsQuery.lte("event_date", today);
   const [eventsResult, venuesResult] = await Promise.all([
-    supabase.from("events").select("id, event_date, event_type, venue_id, client_name, client_phone, payer_type, guest_count, price_per_guest, vat_rate, price_includes_vat, notes").lte("event_date", today).order("event_date"),
+    eventsQuery,
     supabase.from("venues").select("id, name"),
   ]);
   const eventRows = (eventsResult.data ?? []) as EventRow[];
