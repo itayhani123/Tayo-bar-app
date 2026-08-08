@@ -1,23 +1,114 @@
-import { assertOwner } from "@/lib/auth/user";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { sendWhatsAppTemplate } from "@/lib/whatsapp/client";
+import { getWhatsAppSettings } from "@/lib/whatsapp/settings";
+import { buildTemplatePayload } from "@/lib/whatsapp/templates";
+import type {
+  NotificationContext,
+  WhatsAppNotificationType,
+} from "@/lib/whatsapp/types";
+import { hasValidCronAuthorization } from "@/lib/whatsapp/security";
 
-export async function GET() {
-  try {
-    await assertOwner();
-    const admin = createAdminClient();
-    const { data, error } = await admin.from("whatsapp_notifications").select("id, employee_id, event_id, notification_type, scheduled_for, sent_at, status, error_message, employees(full_name), events(client_name)").order("created_at", { ascending: false }).limit(200);
-    if (error) throw error;
-    return Response.json(data);
-  } catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Unauthorized" }, { status: 403 }); }
+type NotificationRow = {
+  id: string;
+  notification_type: WhatsAppNotificationType;
+  payload: NotificationContext;
+};
+
+async function handleCron(request: Request) {
+  if (
+    !hasValidCronAuthorization(
+      request.headers.get("authorization"),
+      process.env.CRON_SECRET
+    )
+  ) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const settings = await getWhatsAppSettings();
+
+  if (!settings.enabled) {
+    return Response.json({ processed: 0, disabled: true });
+  }
+
+  const admin = createAdminClient();
+
+  const { data, error } = await admin
+    .from("whatsapp_notifications")
+    .select("id, notification_type, payload")
+    .eq("status", "pending")
+    .lte("scheduled_for", new Date().toISOString())
+    .order("scheduled_for")
+    .limit(20);
+
+  if (error) {
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+
+  let sent = 0;
+  let failed = 0;
+
+  for (const notification of (data ?? []) as NotificationRow[]) {
+    const { data: claimed } = await admin
+      .from("whatsapp_notifications")
+      .update({ status: "processing" })
+      .eq("id", notification.id)
+      .eq("status", "pending")
+      .select("id")
+      .maybeSingle();
+
+    if (!claimed) continue;
+
+    try {
+      const payload = buildTemplatePayload(
+        notification.notification_type,
+        notification.payload.employeePhone,
+        notification.payload,
+        settings.hoursBefore,
+        Boolean(notification.payload.calculatedSalary)
+      );
+
+      const providerId = await sendWhatsAppTemplate(payload);
+
+      await admin
+        .from("whatsapp_notifications")
+        .update({
+          status: "sent",
+          sent_at: new Date().toISOString(),
+          provider_message_id: providerId,
+          error_message: null,
+        })
+        .eq("id", notification.id);
+
+      sent += 1;
+    } catch (sendError) {
+      const message =
+        sendError instanceof Error
+          ? sendError.message
+          : "WhatsApp send failed";
+
+      await admin
+        .from("whatsapp_notifications")
+        .update({
+          status: "failed",
+          error_message: message.slice(0, 1000),
+        })
+        .eq("id", notification.id);
+
+      failed += 1;
+    }
+  }
+
+  return Response.json({
+    processed: sent + failed,
+    sent,
+    failed,
+  });
+}
+
+export async function GET(request: Request) {
+  return handleCron(request);
 }
 
 export async function POST(request: Request) {
-  try {
-    await assertOwner();
-    const { id } = await request.json() as { id?: string };
-    if (!id) return Response.json({ error: "Missing id" }, { status: 400 });
-    const { error } = await createAdminClient().from("whatsapp_notifications").update({ status: "pending", scheduled_for: new Date().toISOString(), error_message: null }).eq("id", id).eq("status", "failed");
-    if (error) throw error;
-    return Response.json({ retried: true });
-  } catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Unauthorized" }, { status: 403 }); }
+  return handleCron(request);
 }

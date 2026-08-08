@@ -19,10 +19,33 @@ export async function POST(request: Request) {
     const { data: claimed } = await admin.from("whatsapp_notifications").update({ status: "processing" }).eq("id", notification.id).eq("status", "pending").select("id").maybeSingle();
     if (!claimed) continue;
     try {
-      const providerId = await sendWhatsAppTemplate(buildTemplatePayload(notification.notification_type, notification.payload.employeePhone, notification.payload, settings.hoursBefore, Boolean(notification.payload.calculatedSalary)));
-      await admin.from("whatsapp_notifications").update({ status: "sent", sent_at: new Date().toISOString(), provider_message_id: providerId, error_message: null }).eq("id", notification.id);
-      sent += 1;
-    } catch (sendError) {
+  console.log("Processing notification:", notification.id);
+  console.log("Notification type:", notification.notification_type);
+
+  const payload = buildTemplatePayload(
+    notification.notification_type,
+    notification.payload.employeePhone,
+    notification.payload,
+    settings.hoursBefore,
+    Boolean(notification.payload.calculatedSalary)
+  );
+
+  console.log("Payload:", payload);
+
+  const providerId = await sendWhatsAppTemplate(payload);
+
+  await admin
+    .from("whatsapp_notifications")
+    .update({
+      status: "sent",
+      sent_at: new Date().toISOString(),
+      provider_message_id: providerId,
+      error_message: null,
+    })
+    .eq("id", notification.id);
+
+  sent += 1;
+} catch (sendError) {
       const message = sendError instanceof Error ? sendError.message : "WhatsApp send failed";
       await admin.from("whatsapp_notifications").update({ status: "failed", error_message: message.slice(0, 1000) }).eq("id", notification.id);
       failed += 1;
