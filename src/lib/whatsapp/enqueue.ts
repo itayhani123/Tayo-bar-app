@@ -7,6 +7,7 @@ import { notificationDedupeKey } from "./dedupe";
 import { reminderSchedule } from "./scheduling";
 import { getWhatsAppSettings } from "./settings";
 import type { NotificationContext, WhatsAppNotificationType } from "./types";
+import { workTimeNotificationDedupeSource } from "@/features/event-staffing/work-time-notification";
 
 type EventRow = { id: string; event_date: string; start_time: string; event_type: string; venue_id: string };
 type AssignmentRow = { id: string; event_id: string; employee_id: string; pay_type: "hourly" | "fixed"; hourly_rate: number | null; fixed_pay: number | null; work_start: string | null; work_end: string | null };
@@ -16,10 +17,12 @@ export async function enqueueAssignmentNotifications(assignmentId: string, type:
   const { data: assignment, error } = await admin.from("event_assignments").select("id, event_id, employee_id, pay_type, hourly_rate, fixed_pay, work_start, work_end").eq("id", assignmentId).single();
   if (error) throw error;
   const settings = await getWhatsAppSettings();
-  if (!settings.enabled || (type === "assignment_created" ? !settings.assignmentEnabled : !settings.workTimeEnabled)) return { queued: 0, warning: "ההתראות אינן פעילות" };
+  if (!settings.enabled || (type === "assignment_created" ? !settings.assignmentEnabled : !settings.workTimeEnabled)) return { queued: 0, disabled: true, warning: "ההתראות אינן פעילות" };
+  if (type === "work_time_updated" && (!assignment.work_start || !assignment.work_end)) return { queued: 0, skipped: true };
   try {
     const context = await loadContext(assignment as AssignmentRow, actorRole === "owner" && settings.salaryInOwnerMessages);
-    const queued = await insertNotification(type, assignment as AssignmentRow, context, new Date(), `${type}:${assignmentId}:${type === "work_time_updated" ? `${assignment.work_start}:${assignment.work_end}` : "created"}`);
+    const workTimeDedupe = type === "work_time_updated" ? workTimeNotificationDedupeSource(assignmentId, { workStart: assignment.work_start, workEnd: assignment.work_end }) : null;
+    const queued = await insertNotification(type, assignment as AssignmentRow, context, new Date(), workTimeDedupe ?? `${type}:${assignmentId}:created`);
     if (type === "assignment_created") await scheduleReminders(assignment as AssignmentRow, context, settings);
     return queued;
   } catch (notificationError) {
@@ -84,7 +87,7 @@ async function loadContext(assignment: AssignmentRow, includeSalary: boolean): P
 
 async function insertNotification(type: WhatsAppNotificationType, assignment: AssignmentRow, context: NotificationContext, scheduledFor: Date, dedupeSource: string) {
   const dedupeKey = notificationDedupeKey(dedupeSource);
-  const { error } = await createAdminClient().from("whatsapp_notifications").insert({ employee_id: assignment.employee_id, event_id: assignment.event_id, assignment_id: assignment.id, notification_type: type, scheduled_for: scheduledFor.toISOString(), payload: context, dedupe_key: dedupeKey });
+  const { error } = await createAdminClient().from("whatsapp_notifications").insert({ employee_id: assignment.employee_id, event_id: assignment.event_id, assignment_id: assignment.id, notification_type: type, status: "pending", scheduled_for: scheduledFor.toISOString(), payload: context, dedupe_key: dedupeKey });
   if (error?.code === "23505") return { queued: 0 };
   if (error) throw error;
   return { queued: 1 };

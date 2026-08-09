@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import type { AssignmentFormValues, EventAssignment, EventRole, PayType } from "../types";
+import { shouldEnqueueWorkTimeUpdated } from "../work-time-notification";
 
 type AssignmentRow = { id: string; event_id: string; employee_id: string; event_role: EventRole; pay_type: PayType; hourly_rate: number | string | null; fixed_pay: number | string | null; work_start: string | null; work_end: string | null; notes: string | null; created_at: string; updated_at: string };
 type EmployeeRow = { id: string; full_name: string; phone: string | null };
@@ -39,7 +40,10 @@ export async function updateEventAssignment(id: string, eventDate: string, value
   const payload = { event_role: values.eventRole, role: values.eventRole, is_manager: values.eventRole === "manager", pay_type: values.payType, hourly_rate: values.payType === "hourly" ? values.hourlyRate : null, fixed_pay: values.payType === "fixed" ? values.fixedPay : null, work_start: times.workStart, work_end: times.workEnd, notes: values.notes.trim() || null };
   const { error } = await supabase.from("event_assignments").update(payload).eq("id", id);
   if (error) throw error;
-  if (times.workStart && times.workEnd && (previous.work_start !== times.workStart || previous.work_end !== times.workEnd)) await notifyBestEffort({ action: "work_time_updated", assignmentId: id });
+  if (shouldEnqueueWorkTimeUpdated(
+    { workStart: previous.work_start, workEnd: previous.work_end },
+    { workStart: times.workStart, workEnd: times.workEnd },
+  )) await notifyBestEffort({ action: "work_time_updated", assignmentId: id });
 }
 
 export async function deleteEventAssignment(id: string): Promise<void> {
@@ -57,7 +61,59 @@ function assignmentTimes(eventDate: string, startValue: string, endValue: string
 
 async function notifyBestEffort(body: { action: string; assignmentId: string }) {
   try {
-    const response = await fetch("/api/whatsapp/trigger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (!response.ok) console.warn("WhatsApp notification warning:", await response.text());
-  } catch (error) { console.warn("WhatsApp notification warning:", error); }
+    console.log("WHATSAPP TRIGGER REQUEST", body);
+
+    const response = await fetch("/api/whatsapp/trigger", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    console.log("WHATSAPP TRIGGER HTTP", {
+      status: response.status,
+      ok: response.ok,
+      statusText: response.statusText,
+    });
+
+    const raw = await response.text();
+
+    console.log("WHATSAPP TRIGGER RAW RESPONSE", raw);
+
+    let result: {
+      warning?: string;
+      disabled?: boolean;
+      error?: string;
+      queued?: number;
+      raw?: string;
+    } = {};
+
+    try {
+      result = raw ? JSON.parse(raw) : {};
+    } catch {
+      result = { raw };
+    }
+
+    console.log("WHATSAPP TRIGGER RESPONSE", {
+      status: response.status,
+      ok: response.ok,
+      result,
+    });
+
+    if (!response.ok || (result.warning && !result.disabled)) {
+      console.error(
+        "WhatsApp notification enqueue failed:",
+        result.warning ?? result.error ?? response.statusText
+      );
+    }
+  } catch (error) {
+    console.error(
+      "WhatsApp notification enqueue failed:",
+      error instanceof Error ? error.message : "Unknown error"
+    );
+  }
+  
+
+
 }

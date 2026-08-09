@@ -32,6 +32,13 @@ export function buildTemplateParameters(type: WhatsAppNotificationType, context:
       context.venueName,
       context.eventType,
     ]
-    : type === "work_time_updated" ? [context.employeeName, context.eventDate, context.workStart ?? "", context.workEnd ?? "", context.workedDuration ?? "", includeSalary ? context.calculatedSalary ?? "" : ""]
+   : type === "work_time_updated"
+  ? [
+      context.employeeName,
+      context.eventDate,
+      context.workStart ?? "",
+      context.workEnd ?? "",
+      context.workedDuration ?? "",
+    ]
     : event;
 }
