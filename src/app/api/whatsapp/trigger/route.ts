@@ -1,13 +1,14 @@
 import { requireCurrentUser } from "@/lib/auth/user";
-import { cancelAssignmentNotifications, enqueueAssignmentNotifications, enqueueEventChanged } from "@/lib/whatsapp/enqueue";
+import { cancelAssignmentNotifications, enqueueAssignmentNotifications, enqueueEventChanged, enqueueLeadWelcome } from "@/lib/whatsapp/enqueue";
 
-type TriggerBody = { action?: "assignment_created" | "work_time_updated" | "event_changed" | "assignment_removed"; assignmentId?: string; eventId?: string };
+type TriggerBody = { action?: "assignment_created" | "work_time_updated" | "event_changed" | "assignment_removed" | "lead_welcome_manual"; assignmentId?: string; eventId?: string };
 
 export async function POST(request: Request) {
   try {
     const { role } = await requireCurrentUser();
     const body = await request.json() as TriggerBody;
     if (body.action === "event_changed" && body.eventId) return Response.json(await enqueueEventChanged(body.eventId));
+    if (body.action === "lead_welcome_manual" && body.eventId) return Response.json(await enqueueLeadWelcome(body.eventId, true));
     if (body.action === "assignment_removed" && body.assignmentId) { await cancelAssignmentNotifications(body.assignmentId); return Response.json({ cancelled: true }); }
     if ((body.action === "assignment_created" || body.action === "work_time_updated") && body.assignmentId) return Response.json(await enqueueAssignmentNotifications(body.assignmentId, body.action, role));
     return Response.json({ error: "Invalid notification trigger" }, { status: 400 });

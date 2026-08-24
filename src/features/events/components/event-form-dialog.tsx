@@ -13,6 +13,7 @@ import { useCreateEvent, useCreateOperationalEvent, useUpdateEvent, useUpdateOpe
 import type { EventFormValues, EventRecord, VenueOption } from "../types";
 import { PAYER_TYPES, PAYMENT_STATUSES } from "../types";
 import { eventSchema } from "../validation";
+import { EventSalesSection } from "./event-sales-section";
 
 type Props = { event: EventRecord | null; initialValues?: Partial<EventFormValues>; showFinancials?: boolean; venues: VenueOption[]; eventTypes: string[]; packages: string[]; onClose: () => void; onSuccess: (message: string) => void; onError: (message: string) => void };
 
@@ -49,7 +50,7 @@ export function EventFormDialog({ event, initialValues, showFinancials = true, v
     <FormSection title="צוות"><Field label="מזהה מנהל (אופציונלי)" error={message("managerEmployeeId")}><input placeholder="UUID של העובד" className={fieldClass} {...register("managerEmployeeId")} /></Field></FormSection>
     <FormSection title="הערות"><label className={labelClass}>הערות<textarea className="mt-1.5 min-h-28 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-3 focus:ring-ring/20" {...register("notes")} /></label>{message("notes") && <p className="mt-1 text-xs text-destructive">{message("notes")}</p>}</FormSection>
     <div className="flex justify-end gap-2 border-t border-border pt-5"><Button type="button" variant="outline" onClick={onClose}>ביטול</Button><Button type="submit" disabled={isSaving}>{isSaving ? "שומר..." : event ? "שמירת שינויים" : "יצירת אירוע"}</Button></div>
-  </form>{event && <div className="space-y-7 px-5 pb-6"><EventStaffingSection eventId={event.id} eventDate={watch("eventDate")} guestCount={watch("guestCount") || 0} pricePerGuest={watch("pricePerGuest") || 0} vatRate={watch("vatRate") || 0} priceIncludesVat={watch("priceIncludesVat")} estimatedAlcoholCost={watch("estimatedAlcoholCost") || 0} showFinancials={showFinancials} onSuccess={onSuccess} onError={onError} />{showFinancials && <EventPaymentsSection eventId={event.id} totalDue={grossRevenue} onSuccess={onSuccess} onError={onError} />}</div>}</div></div>;
+  </form>{event && <div className="space-y-7 px-5 pb-6"><EventSalesSection event={event} showFinancials={showFinancials} onSuccess={onSuccess} onError={onError} /><EventStaffingSection eventId={event.id} eventDate={watch("eventDate")} guestCount={watch("guestCount") || 0} pricePerGuest={watch("pricePerGuest") || 0} vatRate={watch("vatRate") || 0} priceIncludesVat={watch("priceIncludesVat")} estimatedAlcoholCost={watch("estimatedAlcoholCost") || 0} showFinancials={showFinancials} onSuccess={onSuccess} onError={onError} />{showFinancials && <EventPaymentsSection eventId={event.id} totalDue={grossRevenue} onSuccess={onSuccess} onError={onError} />}</div>}</div></div>;
 }
 
 function FormSection({ title, children }: { title: string; children: React.ReactNode }) { return <section><h3 className="mb-4 text-sm font-semibold text-foreground">{title}</h3><div className="grid gap-4 sm:grid-cols-2">{children}</div></section>; }

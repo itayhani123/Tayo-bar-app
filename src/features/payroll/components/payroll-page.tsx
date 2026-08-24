@@ -8,15 +8,20 @@ import { useMonthlyPayroll } from "../hooks/use-payroll";
 import { usePayrollPaymentStatus } from "../hooks/use-payroll-payment-status";
 import type { EmployeePayroll } from "../types";
 import { PayrollDetailsDialog } from "./payroll-details-dialog";
+import { exportPayrollWorkbook } from "../exporters/payroll-excel";
 
 export function PayrollPage() {
   const [month, setMonth] = useState(currentMonth());
   const [details, setDetails] = useState<EmployeePayroll | null>(null);
+  const [exportMessage, setExportMessage] = useState("");
   const query = useMonthlyPayroll(month);
   const { paidIds: paid, setPaid } = usePayrollPaymentStatus(month);
   const payroll = query.data;
 
-  return <div className="mx-auto max-w-7xl space-y-6"><header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-medium text-muted-foreground">כספים</p><h2 className="mt-1 text-2xl font-semibold">משכורות</h2><p className="mt-2 text-sm text-muted-foreground">חישוב שכר חודשי לפי השיבוצים באירועים.</p></div><div className="flex flex-wrap items-center gap-2"><Button type="button" variant="outline" size="icon" onClick={() => setMonth(moveMonth(month, -1))} aria-label="החודש הקודם"><ChevronRight /></Button><label className="text-sm font-medium">חודש<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} className="mr-2 h-9 rounded-lg border border-input bg-background px-3 text-sm" /></label><Button type="button" variant="outline" size="icon" onClick={() => setMonth(moveMonth(month, 1))} aria-label="החודש הבא"><ChevronLeft /></Button><Button type="button" variant="outline" disabled title="ייצוא יתווסף בהמשך"><Download />ייצוא דוח</Button></div></header>
+  const exportExcel = () => { if (!payroll?.employees.length) { setExportMessage("אין נתוני משכורות לייצוא בחודש שנבחר"); return; } exportPayrollWorkbook(month, payroll.employees); setExportMessage(""); };
+
+  return <div className="mx-auto max-w-7xl space-y-6"><header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-medium text-muted-foreground">כספים</p><h2 className="mt-1 text-2xl font-semibold">משכורות</h2><p className="mt-2 text-sm text-muted-foreground">חישוב שכר חודשי לפי השיבוצים באירועים.</p></div><div className="flex flex-wrap items-center gap-2"><Button type="button" variant="outline" size="icon" onClick={() => setMonth(moveMonth(month, -1))} aria-label="החודש הקודם"><ChevronRight /></Button><label className="text-sm font-medium">חודש<input type="month" value={month} onChange={(event) => { setMonth(event.target.value); setExportMessage(""); }} className="mr-2 h-9 rounded-lg border border-input bg-background px-3 text-sm" /></label><Button type="button" variant="outline" size="icon" onClick={() => setMonth(moveMonth(month, 1))} aria-label="החודש הבא"><ChevronLeft /></Button><Button type="button" variant="outline" disabled={query.isLoading} onClick={exportExcel}><Download />ייצוא ריכוז משכורות לאקסל</Button></div></header>
+    {exportMessage && <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{exportMessage}</p>}
     <p className="text-lg font-medium">{monthTitle(month)}</p>
     {query.isLoading ? <Loading /> : query.isError || !payroll ? <ErrorState /> : <><div className="grid grid-cols-2 gap-3 lg:grid-cols-5"><Summary label="סה״כ משכורות" value={formatMoney(payroll.totalAmount)} /><Summary label="עובדים" value={String(payroll.calculatedEmployeeCount)} /><Summary label="חסרות שעות" value={String(payroll.missingHoursCount)} warning={payroll.missingHoursCount > 0} /><Summary label="שולם" value={String(payroll.employees.filter((employee) => paid.has(employee.employeeId)).length)} /><Summary label="תאריך תשלום אחרון" value={formatDate(paymentDeadline(month))} /></div><PayrollList employees={payroll.employees} paid={paid} onDetails={setDetails} onPaid={setPaid} /></>}
     {details && <PayrollDetailsDialog payroll={details} onClose={() => setDetails(null)} />}

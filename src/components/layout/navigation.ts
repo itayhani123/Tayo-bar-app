@@ -6,6 +6,7 @@ export const navigationItems: NavigationItem[] = [
   { href: "/dashboard", label: "מרכז בקרה", icon: "dashboard", roles: both },
   { href: "/calendar", label: "לוח שנה", icon: "calendar", roles: both },
   { href: "/events", label: "אירועים", icon: "events", roles: both },
+  { href: "/leads", label: "לידים / CRM", icon: "income", roles: both },
   { href: "/employees", label: "עובדים", icon: "employees", roles: both },
   { href: "/timesheets", label: "שעות עבודה", icon: "timesheets", roles: both },
   { href: "/payroll", label: "משכורות", icon: "payroll", roles: owner },

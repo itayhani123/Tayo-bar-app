@@ -7,6 +7,9 @@ export type EventType = (typeof EVENT_TYPES)[number];
 export type PackageType = (typeof PACKAGE_TYPES)[number];
 export type PayerType = (typeof PAYER_TYPES)[number];
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+export const SALES_STATUSES = ["lead", "contacted", "proposal_sent", "waiting", "won", "lost"] as const;
+export type SalesStatus = (typeof SALES_STATUSES)[number];
+export const salesStatusLabels: Record<SalesStatus, string> = { lead: "ליד חדש", contacted: "נוצר קשר", proposal_sent: "הצעה נשלחה", waiting: "ממתין", won: "נסגר", lost: "אבד" };
 
 export type EventFormValues = {
   eventDate: string;
@@ -34,6 +37,13 @@ export type EventRecord = EventFormValues & {
   venueName: string;
   createdAt: string;
   updatedAt: string;
+  salesStatus: SalesStatus | null;
+  leadSource: string;
+  salesNotes: string;
+  lastContactAt: string;
+  nextFollowUpAt: string;
+  proposalAmount: number | null;
+  closedAt: string;
 };
 
 export type VenueOption = { id: string; name: string };

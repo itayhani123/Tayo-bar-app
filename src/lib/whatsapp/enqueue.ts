@@ -12,6 +12,24 @@ import { workTimeNotificationDedupeSource } from "@/features/event-staffing/work
 type EventRow = { id: string; event_date: string; start_time: string; event_type: string; venue_id: string };
 type AssignmentRow = { id: string; event_id: string; employee_id: string; pay_type: "hourly" | "fixed"; hourly_rate: number | null; fixed_pay: number | null; work_start: string | null; work_end: string | null };
 
+export async function enqueueLeadWelcome(eventId: string, manual = false) {
+  const settings = await getWhatsAppSettings();
+  if (!settings.enabled || !settings.leadWelcomeEnabled) return { queued: 0, disabled: true };
+  const admin = createAdminClient();
+  const { data: event, error } = await admin.from("events").select("id, event_date, event_type, venue_id, client_name, client_phone, sales_status").eq("id", eventId).single();
+  if (error) throw error;
+  if (event.sales_status !== "lead") return { queued: 0, skipped: true, warning: "האירוע אינו ליד חדש" };
+  const phone = normalizeIsraeliPhone(event.client_phone);
+  if (!phone) return { queued: 0, skipped: true, warning: "מספר הטלפון של הלקוח חסר או לא תקין" };
+  const { data: venue } = await admin.from("venues").select("name").eq("id", event.venue_id).maybeSingle();
+  const payload: NotificationContext = { customerName: event.client_name, customerPhone: phone, eventDate: event.event_date, eventType: translateStoredValue(event.event_type), venueName: venue?.name ?? "ללא אולם" };
+  const source = manual ? `lead_welcome:${eventId}:manual:${crypto.randomUUID()}` : `lead_welcome:${eventId}`;
+  const { error: insertError } = await admin.from("whatsapp_notifications").insert({ employee_id: null, event_id: eventId, assignment_id: null, notification_type: "lead_welcome", status: "pending", scheduled_for: new Date().toISOString(), payload, dedupe_key: notificationDedupeKey(source) });
+  if (insertError?.code === "23505") return { queued: 0, duplicate: true };
+  if (insertError) throw insertError;
+  return { queued: 1 };
+}
+
 export async function enqueueAssignmentNotifications(assignmentId: string, type: "assignment_created" | "work_time_updated", actorRole: "owner" | "manager") {
   const admin = createAdminClient();
   const { data: assignment, error } = await admin.from("event_assignments").select("id, event_id, employee_id, pay_type, hourly_rate, fixed_pay, work_start, work_end").eq("id", assignmentId).single();
@@ -62,11 +80,11 @@ export async function cancelAssignmentNotifications(assignmentId: string) {
 async function scheduleReminders(assignment: AssignmentRow, context: NotificationContext, settings: Awaited<ReturnType<typeof getWhatsAppSettings>>) {
   const eventVersion = `${context.eventDate}:${context.eventTime}`;
   if (settings.dayBeforeEnabled) {
-    const when = reminderSchedule(context.eventDate, context.eventTime, 24);
+    const when = reminderSchedule(context.eventDate, context.eventTime ?? "", 24);
     if (when) await insertNotification("reminder_day_before", assignment, context, when, `reminder_day_before:${assignment.id}:${eventVersion}`);
   }
   if (settings.hoursBeforeEnabled) {
-    const when = reminderSchedule(context.eventDate, context.eventTime, settings.hoursBefore);
+    const when = reminderSchedule(context.eventDate, context.eventTime ?? "", settings.hoursBefore);
     if (when) await insertNotification("reminder_hours_before", assignment, { ...context, calculatedSalary: String(settings.hoursBefore) }, when, `reminder_hours_before:${assignment.id}:${eventVersion}:${settings.hoursBefore}`);
   }
 }

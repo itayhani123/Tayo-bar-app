@@ -61,7 +61,7 @@ async function handleCron(request: Request) {
     try {
       const payload = buildTemplatePayload(
         notification.notification_type,
-        notification.payload.employeePhone,
+        notification.notification_type === "lead_welcome" ? notification.payload.customerPhone ?? "" : notification.payload.employeePhone ?? "",
         notification.payload,
         settings.hoursBefore,
         Boolean(notification.payload.calculatedSalary)

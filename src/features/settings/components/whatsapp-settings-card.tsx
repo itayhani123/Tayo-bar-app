@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import type { WhatsAppSettings } from "@/lib/whatsapp/types";
 
 type Employee = { id: string; full_name: string; phone: string | null };
-const defaults: WhatsAppSettings = { enabled: false, assignmentEnabled: true, eventChangeEnabled: true, dayBeforeEnabled: true, hoursBeforeEnabled: true, hoursBefore: 4, workTimeEnabled: true, salaryInOwnerMessages: false };
+const defaults: WhatsAppSettings = { enabled: false, leadWelcomeEnabled: true, assignmentEnabled: true, eventChangeEnabled: true, dayBeforeEnabled: true, hoursBeforeEnabled: true, hoursBefore: 4, workTimeEnabled: true, salaryInOwnerMessages: false };
 
 export function WhatsAppSettingsCard() {
   const [settings, setSettings] = useState(defaults); const [employees, setEmployees] = useState<Employee[]>([]); const [employeeId, setEmployeeId] = useState(""); const [notice, setNotice] = useState(""); const [loading, setLoading] = useState(true);

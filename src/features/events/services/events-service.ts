@@ -23,6 +23,8 @@ type EventDatabaseRow = {
   notes: string | null;
   created_at: string;
   updated_at: string;
+  sales_status: EventRecord["salesStatus"];
+  lead_source: string | null; sales_notes: string | null; last_contact_at: string | null; next_follow_up_at: string | null; proposal_amount: number | string | null; closed_at: string | null;
 };
 
 function toRecord(row: EventDatabaseRow, venueName: string): EventRecord {
@@ -33,6 +35,7 @@ function toRecord(row: EventDatabaseRow, venueName: string): EventRecord {
     payerType: row.payer_type, paymentStatus: row.payment_status, managerEmployeeId: row.manager_employee_id ?? "",
     securityCheckReceived: row.security_check_received, invoiceIssued: row.invoice_issued,
     estimatedAlcoholCost: Number(row.estimated_alcohol_cost), notes: row.notes ?? "", createdAt: row.created_at, updatedAt: row.updated_at,
+    salesStatus: row.sales_status, leadSource: row.lead_source ?? "", salesNotes: row.sales_notes ?? "", lastContactAt: row.last_contact_at ?? "", nextFollowUpAt: row.next_follow_up_at ?? "", proposalAmount: row.proposal_amount == null ? null : Number(row.proposal_amount), closedAt: row.closed_at ?? "",
   };
 }
 
@@ -67,7 +70,7 @@ export async function listEvents(includeFinancials = true): Promise<EventRecord[
     const [{ data, error }, names] = await Promise.all([
       createClient()
         .from("events")
-        .select(includeFinancials ? "*" : "id, event_date, start_time, event_type, venue_id, client_name, client_phone, guest_count, package_type, security_check_received, invoice_issued, manager_employee_id, notes, created_at, updated_at")
+        .select(includeFinancials ? "*" : "id, event_date, start_time, event_type, venue_id, client_name, client_phone, guest_count, package_type, security_check_received, invoice_issued, manager_employee_id, notes, created_at, updated_at, sales_status, lead_source, sales_notes, last_contact_at, next_follow_up_at, closed_at")
         .order("event_date")
         .order("start_time"),
       venueNames(),
@@ -98,12 +101,14 @@ export async function getEvent(id: string): Promise<EventRecord> {
 }
 
 export async function createEvent(values: EventFormValues): Promise<EventRecord> {
-  const { data, error } = await createClient().from("events").insert(toPayload(values)).select().single();
-  if (error) throw error;
-  const row = data as EventDatabaseRow;
+  const response = await fetch("/api/events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error ?? "Event creation failed");
+  if (body.whatsappWarning) console.warn("Lead welcome warning:", body.whatsappWarning);
+  const row = body.event as EventDatabaseRow;
   return toRecord(row, (await venueNames()).get(row.venue_id) ?? "Unknown venue");
 }
-export async function createOperationalEvent(values: EventFormValues): Promise<void> { const payload = { event_date: values.eventDate, start_time: values.startTime, event_type: values.eventType, venue_id: values.venueId, client_name: values.clientName.trim(), client_phone: values.clientPhone.trim() || null, guest_count: values.guestCount, package_type: values.packageType, payer_type: "client", payment_status: "unpaid", manager_employee_id: values.managerEmployeeId || null, security_check_received: false, invoice_issued: false, notes: values.notes.trim() || null }; const { error } = await createClient().from("events").insert(payload); if (error) throw error; }
+export async function createOperationalEvent(values: EventFormValues): Promise<void> { await createEvent(values); }
 
 export async function updateEvent(id: string, values: EventFormValues): Promise<EventRecord> {
   const supabase = createClient();
