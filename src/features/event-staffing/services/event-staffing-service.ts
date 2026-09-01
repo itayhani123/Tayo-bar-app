@@ -20,31 +20,143 @@ export async function listEventAssignments(eventId: string, includeFinancials = 
   });
 }
 
-export async function createEventAssignment(eventId: string, eventDate: string, values: AssignmentFormValues): Promise<void> {
+export async function createEventAssignment(
+  eventId: string,
+  eventDate: string,
+  values: AssignmentFormValues
+): Promise<void> {
   const supabase = createClient();
-  const { data: existing, error: lookupError } = await supabase.from("event_assignments").select("id").eq("event_id", eventId).eq("employee_id", values.employeeId).maybeSingle();
+
+  const { data: existing, error: lookupError } = await supabase
+    .from("event_assignments")
+    .select("id")
+    .eq("event_id", eventId)
+    .eq("employee_id", values.employeeId)
+    .maybeSingle();
+
   if (lookupError) throw lookupError;
-  if (existing) throw new Error("employee_already_assigned");
-  const times = assignmentTimes(eventDate, values.workStart, values.workEnd);
-  const payload = { event_id: eventId, employee_id: values.employeeId, event_role: values.eventRole, role: values.eventRole, is_manager: values.eventRole === "manager", pay_type: values.payType, hourly_rate: values.payType === "hourly" ? values.hourlyRate : null, fixed_pay: values.payType === "fixed" ? values.fixedPay : null, work_start: times.workStart, work_end: times.workEnd, notes: values.notes.trim() || null };
-  const { data, error } = await supabase.from("event_assignments").insert(payload).select("id").single();
+
+  if (existing) {
+    throw new Error("employee_already_assigned");
+  }
+
+  const times = assignmentTimes(
+    eventDate,
+    values.workStart,
+    values.workEnd
+  );
+
+  const payload = {
+    event_id: eventId,
+    employee_id: values.employeeId,
+    event_role: values.eventRole,
+    role: values.eventRole,
+    is_manager: values.eventRole === "manager",
+    pay_type: values.payType,
+    hourly_rate:
+      values.payType === "hourly" ? values.hourlyRate : null,
+    fixed_pay:
+      values.payType === "fixed" ? values.fixedPay : null,
+    work_start: times.workStart,
+    work_end: times.workEnd,
+    notes: values.notes.trim() || null,
+  };
+
+  const { data, error } = await supabase
+    .from("event_assignments")
+    .insert(payload)
+    .select("id")
+    .single();
+
   if (error) throw error;
-  await notifyBestEffort({ action: "assignment_created", assignmentId: data.id });
+
+  // הודעה על שיבוץ העובד לאירוע
+  await notifyBestEffort({
+    action: "assignment_created",
+    assignmentId: data.id,
+  });
+
+  // אם כבר בזמן יצירת השיבוץ הוזנו שעת התחלה ושעת סיום,
+  // ניצור גם הודעת שעות עבודה.
+  if (times.workStart && times.workEnd) {
+    await notifyBestEffort({
+      action: "work_time_updated",
+      assignmentId: data.id,
+    });
+  }
 }
 
-export async function updateEventAssignment(id: string, eventDate: string, values: AssignmentFormValues): Promise<void> {
+
+export async function updateEventAssignment(
+  id: string,
+  eventDate: string,
+  values: AssignmentFormValues
+): Promise<void> {
   const supabase = createClient();
-  const { data: previous, error: previousError } = await supabase.from("event_assignments").select("work_start, work_end").eq("id", id).single();
+
+  const { data: previous, error: previousError } = await supabase
+    .from("event_assignments")
+    .select("work_start, work_end")
+    .eq("id", id)
+    .single();
+
   if (previousError) throw previousError;
-  const times = assignmentTimes(eventDate, values.workStart, values.workEnd);
-  const payload = { event_role: values.eventRole, role: values.eventRole, is_manager: values.eventRole === "manager", pay_type: values.payType, hourly_rate: values.payType === "hourly" ? values.hourlyRate : null, fixed_pay: values.payType === "fixed" ? values.fixedPay : null, work_start: times.workStart, work_end: times.workEnd, notes: values.notes.trim() || null };
-  const { error } = await supabase.from("event_assignments").update(payload).eq("id", id);
+
+  const times = assignmentTimes(
+    eventDate,
+    values.workStart,
+    values.workEnd
+  );
+
+  const payload = {
+    event_role: values.eventRole,
+    role: values.eventRole,
+    is_manager: values.eventRole === "manager",
+    pay_type: values.payType,
+    hourly_rate:
+      values.payType === "hourly" ? values.hourlyRate : null,
+    fixed_pay:
+      values.payType === "fixed" ? values.fixedPay : null,
+    work_start: times.workStart,
+    work_end: times.workEnd,
+    notes: values.notes.trim() || null,
+  };
+
+  const { error } = await supabase
+    .from("event_assignments")
+    .update(payload)
+    .eq("id", id);
+
   if (error) throw error;
-  if (shouldEnqueueWorkTimeUpdated(
-    { workStart: previous.work_start, workEnd: previous.work_end },
-    { workStart: times.workStart, workEnd: times.workEnd },
-  )) await notifyBestEffort({ action: "work_time_updated", assignmentId: id });
+
+  const shouldNotify = shouldEnqueueWorkTimeUpdated(
+    {
+      workStart: previous.work_start,
+      workEnd: previous.work_end,
+    },
+    {
+      workStart: times.workStart,
+      workEnd: times.workEnd,
+    }
+  );
+
+  console.log("WORK TIME UPDATE DEBUG", {
+    assignmentId: id,
+    previousWorkStart: previous.work_start,
+    previousWorkEnd: previous.work_end,
+    newWorkStart: times.workStart,
+    newWorkEnd: times.workEnd,
+    shouldNotify,
+  });
+
+  if (shouldNotify) {
+    await notifyBestEffort({
+      action: "work_time_updated",
+      assignmentId: id,
+    });
+  }
 }
+
 
 export async function deleteEventAssignment(id: string): Promise<void> {
   const { error } = await createClient().from("event_assignments").delete().eq("id", id);

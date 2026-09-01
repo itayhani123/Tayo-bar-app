@@ -4,6 +4,7 @@ import type { CalendarEvent } from "../types";
 
 export const recommendedBartenders = (guests: number) => Math.ceil(Math.max(guests, 0) / 70) + 1;
 export const isBritEvent = (eventType: string) => eventType.trim().toLocaleLowerCase() === "brit" || eventType.trim() === "ברית";
+export const isNotPouringFee = (packageType: string) => packageType !== "Pouring";
 
 export function readableTextColor(color: string): "#FFFFFF" | "#111827" {
   if (!/^#[0-9A-F]{6}$/i.test(color)) return "#FFFFFF";
@@ -14,7 +15,13 @@ export function readableTextColor(color: string): "#FFFFFF" | "#111827" {
 
 export function toFullCalendarEvent(event: CalendarEvent, color = "#475569"): EventInput {
   const closed = event.salesStatus === "won";
-  const cardColor = closed ? "#15803d" : color;
+  const notPouringFee = isNotPouringFee(event.packageType);
+  const cardColor = notPouringFee ? "#fef08a" : closed ? "#15803d" : color;
+  const classNames = [
+    ...(closed ? ["calendar-sale-won"] : []),
+    ...(isBritEvent(event.eventType) ? ["calendar-event-brit"] : []),
+    ...(notPouringFee ? ["calendar-not-pouring-fee"] : []),
+  ];
   return {
     id: event.id,
     title: `${event.venueName} · ${translateStoredValue(event.eventType)} · ${event.guestCount} אורחים`,
@@ -23,9 +30,9 @@ export function toFullCalendarEvent(event: CalendarEvent, color = "#475569"): Ev
     editable: true,
     durationEditable: false,
     backgroundColor: cardColor,
-    borderColor: closed ? "#166534" : color,
+    borderColor: closed ? "#166534" : notPouringFee ? "#eab308" : color,
     textColor: readableTextColor(cardColor),
-    classNames: closed ? ["calendar-sale-won"] : isBritEvent(event.eventType) ? ["calendar-event-brit"] : [],
+    classNames,
     extendedProps: { record: event },
   };
 }

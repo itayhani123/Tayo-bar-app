@@ -7,6 +7,7 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EventStaffingSection } from "@/features/event-staffing";
 import { EventPaymentsSection } from "@/features/event-payments";
+import { calculateVenueHallFee, getVenueHallFeePerGuest } from "@/features/receivables/utils/receivables-calculations";
 import { calculateVat } from "@/lib/finance/calculations";
 import { formatMoney, payerLabels, paymentStatusLabels, translateStoredValue } from "@/lib/hebrew";
 import { useCreateEvent, useCreateOperationalEvent, useUpdateEvent, useUpdateOperationalEvent } from "../hooks";
@@ -30,6 +31,15 @@ export function EventFormDialog({ event, initialValues, showFinancials = true, v
   const { register, handleSubmit, reset, watch, formState: { errors } } = form;
   const revenue = (watch("guestCount") || 0) * (watch("pricePerGuest") || 0);
   const grossRevenue = calculateVat({ guestCount: watch("guestCount") || 0, pricePerGuest: watch("pricePerGuest") || 0, vatRate: watch("vatRate") || 0, priceIncludesVat: watch("priceIncludesVat") }).grossRevenue;
+  const hallFee = event
+  ? calculateVenueHallFee({
+      venueName: event.venueName,
+      eventType: watch("eventType"),
+      packageType: watch("packageType"),
+      guestCount: watch("guestCount") || 0,
+    })
+  : 0;
+  const hallFeePerGuest = event ? getVenueHallFeePerGuest(event.venueName) : 0;
   const isSaving = createMutation.isPending || operationalCreateMutation.isPending || updateMutation.isPending || operationalUpdateMutation.isPending;
 
   useEffect(() => { reset(event ?? { ...emptyValues, ...initialValues }); }, [event, initialValues, reset]);
@@ -50,7 +60,7 @@ export function EventFormDialog({ event, initialValues, showFinancials = true, v
     <FormSection title="צוות"><Field label="מזהה מנהל (אופציונלי)" error={message("managerEmployeeId")}><input placeholder="UUID של העובד" className={fieldClass} {...register("managerEmployeeId")} /></Field></FormSection>
     <FormSection title="הערות"><label className={labelClass}>הערות<textarea className="mt-1.5 min-h-28 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-3 focus:ring-ring/20" {...register("notes")} /></label>{message("notes") && <p className="mt-1 text-xs text-destructive">{message("notes")}</p>}</FormSection>
     <div className="flex justify-end gap-2 border-t border-border pt-5"><Button type="button" variant="outline" onClick={onClose}>ביטול</Button><Button type="submit" disabled={isSaving}>{isSaving ? "שומר..." : event ? "שמירת שינויים" : "יצירת אירוע"}</Button></div>
-  </form>{event && <div className="space-y-7 px-5 pb-6"><EventSalesSection event={event} showFinancials={showFinancials} onSuccess={onSuccess} onError={onError} /><EventStaffingSection eventId={event.id} eventDate={watch("eventDate")} guestCount={watch("guestCount") || 0} pricePerGuest={watch("pricePerGuest") || 0} vatRate={watch("vatRate") || 0} priceIncludesVat={watch("priceIncludesVat")} estimatedAlcoholCost={watch("estimatedAlcoholCost") || 0} showFinancials={showFinancials} onSuccess={onSuccess} onError={onError} />{showFinancials && <EventPaymentsSection eventId={event.id} totalDue={grossRevenue} onSuccess={onSuccess} onError={onError} />}</div>}</div></div>;
+  </form>{event && <div className="space-y-7 px-5 pb-6"><EventSalesSection event={event} showFinancials={showFinancials} onSuccess={onSuccess} onError={onError} /><EventStaffingSection eventId={event.id} eventDate={watch("eventDate")} guestCount={watch("guestCount") || 0} pricePerGuest={watch("pricePerGuest") || 0} vatRate={watch("vatRate") || 0} priceIncludesVat={watch("priceIncludesVat")} estimatedAlcoholCost={watch("estimatedAlcoholCost") || 0} venueHallFee={hallFee} venueHallFeePerGuest={hallFeePerGuest} showFinancials={showFinancials} onSuccess={onSuccess} onError={onError} />{showFinancials && <EventPaymentsSection eventId={event.id} totalDue={grossRevenue} hallFee={hallFee} hallFeePerGuest={hallFeePerGuest} guestCount={watch("guestCount") || 0} onSuccess={onSuccess} onError={onError} />}</div>}</div></div>;
 }
 
 function FormSection({ title, children }: { title: string; children: React.ReactNode }) { return <section><h3 className="mb-4 text-sm font-semibold text-foreground">{title}</h3><div className="grid gap-4 sm:grid-cols-2">{children}</div></section>; }

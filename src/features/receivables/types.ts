@@ -9,17 +9,25 @@ export type ReceivableEvent = {
   clientName: string;
   clientPhone: string;
   guestCount: number;
+  packageType: string;
+  venueHallFeePerGuest: number;
+  venueHallFeeGuestCount: number;
+  venueHallFee: number;
   pricePerGuest: number;
   notes: string;
   payerType: PayerType;
   totalBilled: number;
   paid: number;
+  outstandingBeforeHallFee: number;
   outstanding: number;
+  venueSettlementBeforeHallFee: number;
+  venueSettlement: number;
   paymentStatus: PaymentStatus;
   lastPaymentDate: string | null;
   lastPaymentMethod: string | null;
+  
 };
 
 export type ReceivablesScope = "current" | "previous" | "next" | "all";
-export type VenueReceivable = { venueId: string; venueName: string; eventCount: number; totalBilled: number; paid: number; outstanding: number; events: ReceivableEvent[] };
+export type VenueReceivable = { venueId: string; venueName: string; eventCount: number; totalBilled: number; paid: number; hallFee: number; venueSettlement: number; events: ReceivableEvent[] };
 export type ReceivablesSummary = { totalOpenBalance: number; venueBalance: number; customerBalance: number; currentMonthReceivables: number };
