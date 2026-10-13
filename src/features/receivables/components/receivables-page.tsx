@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useVenueSettlements } from "../hooks/use-venue-settlements";
+import { VenueSettlementDialog } from "./venue-settlement-dialog";
 import { useMemo, useState } from "react";
 import {
   AlertCircle,
@@ -53,6 +55,8 @@ const statusLabels = {
 
 export function ReceivablesPage() {
   const query = useReceivables();
+  const settlementsQuery = useVenueSettlements();
+  const settlements = settlementsQuery.data ?? [];
 
   const [scope, setScope] =
     useState<ReceivablesScope>("current");
@@ -108,32 +112,7 @@ export function ReceivablesPage() {
     ],
   );
 
-  /*
-   * אירועים עבור כרטיסי האולמות וה-Excel.
-   *
-   * כן מכבדים:
-   * - תקופה
-   * - סוג אירוע
-   *
-   * לא מסננים לפי venueId כדי שכל
-   * כרטיסי האולמות ימשיכו להופיע.
-   */
-  const venueScopeEvents = useMemo(
-    () =>
-      filterReceivables(
-        allEvents,
-        scope,
-        today,
-        "",
-        eventType,
-      ),
-    [
-      allEvents,
-      scope,
-      today,
-      eventType,
-    ],
-  );
+  // Hall fee audit totals retain their original cumulative event values.
   const uptownHallFeeTotals = useMemo(() => {
   const uptownEvents = allEvents.filter(
     (event) =>
@@ -155,7 +134,7 @@ export function ReceivablesPage() {
   };
 }, [allEvents]);
 
-  if (query.isLoading) {
+  if (query.isLoading || settlementsQuery.isLoading) {
     return (
       <div className="grid min-h-96 place-items-center">
         <LoaderCircle className="animate-spin" />
@@ -166,10 +145,10 @@ export function ReceivablesPage() {
     );
   }
 
-  if (query.isError) {
+  if (query.isError || settlementsQuery.isError) {
     return (
       <ErrorState
-        onRetry={() => query.refetch()}
+        onRetry={() => { void query.refetch(); void settlementsQuery.refetch(); }}
       />
     );
   }
@@ -182,21 +161,22 @@ export function ReceivablesPage() {
       allEvents,
       allEvents,
       today,
+      settlements,
     );
 
   /*
    * כל האולמות לצורך ה-select.
    */
   const availableVenues =
-    groupByVenue(allEvents);
+    groupByVenue(allEvents, settlements);
 
    
 
   /*
-   * כרטיסי האולמות מכבדים את התקופה.
+   * כרטיסי האולמות מציגים יתרה מצטברת לאחר סגירות.
    */
   const venueCards =
-    groupByVenue(venueScopeEvents);
+    groupByVenue(allEvents, settlements);
 
   /*
    * טבלת האולם מכבדת גם את venueId.
@@ -226,19 +206,19 @@ export function ReceivablesPage() {
   );
 
   /*
-   * ייצוא אולם לפי התקופה שנבחרה.
+   * ייצוא אולם מצטבר, כולל היסטוריית סגירות.
    */
   const exportVenue = async (
     id: string,
     name: string,
   ) => {
     const rows = venueExportEvents(
-      venueScopeEvents,
+      allEvents,
       today,
       id,
     );
 
-    if (!rows.length) {
+    if (!rows.length && !settlements.some((row) => row.venueId === id)) {
       setExportNotice(
         "אין התחשבנות מול אולם זה בתקופה שנבחרה",
       );
@@ -255,8 +235,9 @@ export function ReceivablesPage() {
     exportVenueWorkbook(
       id,
       name,
-      venueScopeEvents,
+      allEvents,
       today,
+      settlements,
     );
   };
 
@@ -346,7 +327,7 @@ export function ReceivablesPage() {
         />
 
         <Kpi
-          label="גבייה בחודש הנוכחי"
+          label="יתרות לקוחות מאירועי החודש"
           value={
             summary.currentMonthReceivables
           }
@@ -356,7 +337,7 @@ export function ReceivablesPage() {
       {/* VENUE CARDS */}
       <section>
         <h3 className="mb-3 text-lg font-semibold">
-          יתרה לפי אולם
+          יתרה מצטברת לפי אולם — כל התקופות, לאחר סגירות
         </h3>
 
         {venueCards.length ? (
@@ -414,7 +395,7 @@ export function ReceivablesPage() {
 
                      {venue.hallFee > 0 && (
   <p className="mt-1 text-xs text-muted-foreground">
-    עמלות אולם בתקופה:{" "}
+    עמלות אולם מצטברות:{" "}
     {formatMoney(venue.hallFee)}
   </p>
 )}
@@ -447,6 +428,7 @@ export function ReceivablesPage() {
                       </p>
                     </button>
 
+                    <VenueSettlementDialog venueId={venue.venueId} venueName={venue.venueName} history={settlements.filter((row) => row.venueId === venue.venueId)} />
                     <Button
                       type="button"
                       size="sm"
@@ -460,7 +442,7 @@ export function ReceivablesPage() {
                       }
                     >
                       <Download />
-                      ייצוא דוח אקסל
+                      ייצוא דוח אקסל מצטבר
                     </Button>
                   </div>
                 );
@@ -595,7 +577,7 @@ export function ReceivablesPage() {
               }}
             >
               <Download />
-              ייצוא אקסל לאולם שנבחר
+              ייצוא אקסל מצטבר לאולם שנבחר
             </Button>
           </div>
         )}
@@ -610,7 +592,7 @@ export function ReceivablesPage() {
             events,
           ) =>
             setDetails({
-              title: `התחשבנות מול אולם — ${venueName}`,
+              title: `סכומי אירועים לפני סגירות — ${venueName}`,
               events:
                 unsettledVenueEvents(
                   events,
@@ -682,7 +664,7 @@ function VenueTable({
   return (
     <section>
       <h3 className="mb-3 text-lg font-semibold">
-        לפי אולם
+        אירועי אולם בתקופה — סכומים היסטוריים לפני סגירות
       </h3>
 
       <div className="overflow-x-auto rounded-xl border border-border bg-card">
@@ -696,7 +678,7 @@ function VenueTable({
                 "אורחים",
                 "יתרה לפני עמלה",
                 "עמלה לאולם",
-                "יתרה מול האולם",
+                "סכום אירוע לפני סגירות",
               ].map((label) => (
                 <th
                   className="px-4 py-3 font-medium"

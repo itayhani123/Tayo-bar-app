@@ -1,4 +1,4 @@
-import { calculatePaymentSummary } from "@/features/event-payments";
+import { calculatePaymentSummary } from "@/features/event-payments/calculations";
 import { calculateVat, roundMoney } from "@/lib/finance/calculations";
 import type { ReceivableEvent } from "../types";
 import { receivablePaymentStatus } from "./receivables-policy";

@@ -8,6 +8,77 @@ export const recommendedBartenders = (guests: number) => Math.ceil(Math.max(gues
 export const assignmentSalary = (assignment: DashboardAssignment) => getAssignmentSalary({ ...assignment, employeePhone: "", notes: "", createdAt: "", updatedAt: "" } as EventAssignment);
 export const eventStaffCost = (event: DashboardEvent) => event.assignments.reduce((sum, assignment) => sum + (assignmentSalary(assignment) ?? 0), 0);
 export const eventRevenue = (event: DashboardEvent) => event.guestCount * event.pricePerGuest;
+export type VenueProfitability = {
+  venueName: string;
+  eventCount: number;
+  guestCount: number;
+  netRevenue: number;
+  grossRevenue: number;
+  staffCost: number;
+  alcoholCost: number;
+  profit: number;
+};
+
+export function calculateVenueProfitability(
+  events: DashboardEvent[],
+): VenueProfitability[] {
+  const venues = new Map<
+    string,
+    VenueProfitability
+  >();
+
+  for (const event of events) {
+    const revenue = calculateVat(event);
+    const staffCost = eventStaffCost(event);
+    const alcoholCost =
+      event.estimatedAlcoholCost ?? 0;
+
+    const existing = venues.get(
+      event.venueName,
+    ) ?? {
+      venueName: event.venueName,
+      eventCount: 0,
+      guestCount: 0,
+      netRevenue: 0,
+      grossRevenue: 0,
+      staffCost: 0,
+      alcoholCost: 0,
+      profit: 0,
+    };
+
+    existing.eventCount += 1;
+    existing.guestCount +=
+      event.guestCount ?? 0;
+
+    existing.netRevenue +=
+      revenue.netRevenue;
+
+    existing.grossRevenue +=
+      revenue.grossRevenue;
+
+    existing.staffCost += staffCost;
+    existing.alcoholCost += alcoholCost;
+
+    existing.profit +=
+      revenue.netRevenue -
+      staffCost -
+      alcoholCost;
+
+    venues.set(
+      event.venueName,
+      existing,
+    );
+  }
+
+  return [...venues.values()].sort(
+    (a, b) =>
+      b.profit - a.profit ||
+      a.venueName.localeCompare(
+        b.venueName,
+        "he",
+      ),
+  );
+}
 export const actualPaymentStatus = (event: DashboardEvent) => calculatePaymentSummary(calculateVat(event).grossRevenue, event.paymentAmounts.map((amount) => ({ amount }))).status;
 
 export function eventReadiness(event: DashboardEvent): Readiness {

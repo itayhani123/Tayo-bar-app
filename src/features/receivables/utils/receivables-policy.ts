@@ -1,4 +1,5 @@
 import type { PaymentStatus } from "@/features/events/types";
+import type { VenueSettlement } from "./venue-settlements";
 import type { ReceivableEvent, ReceivablesScope, ReceivablesSummary, VenueReceivable } from "../types";
 
 export const isActualReceivable = (event: Pick<ReceivableEvent, "eventDate">, today: string) => event.eventDate <= today;
@@ -11,18 +12,23 @@ export function filterReceivables(events: ReceivableEvent[], scope: ReceivablesS
   return events.filter((event) => (!periodStart || event.eventDate >= periodStart) && event.eventDate <= today && event.eventDate <= periodEnd && (!venueId || event.venueId === venueId) && (!eventType || event.eventType === eventType));
 }
 
-export function calculateReceivablesSummary(filtered: ReceivableEvent[], allEvents: ReceivableEvent[], today: string): ReceivablesSummary {
+export function calculateReceivablesSummary(filtered: ReceivableEvent[], allEvents: ReceivableEvent[], today: string, settlements: VenueSettlement[] = []): ReceivablesSummary {
   const actualFiltered = filtered.filter((event) => isActualReceivable(event, today)); const actualEvents = allEvents.filter((event) => isActualReceivable(event, today));
   const open = (events: ReceivableEvent[], payer?: "client" | "venue") => events.filter((event) => !payer || event.payerType === payer).reduce((sum, event) => sum + Math.max(event.outstanding, 0), 0);
-  const venueBalance = actualFiltered.reduce((sum, event) => sum + event.venueSettlement, 0);
-  return { totalOpenBalance: open(actualFiltered), venueBalance, customerBalance: open(actualFiltered, "client"), currentMonthReceivables: open(actualEvents.filter((event) => event.eventDate.startsWith(today.slice(0, 7)))) };
+  const venues = groupByVenue(actualEvents, settlements.filter((row) => row.cutoffDate <= today));
+  const venueBalance = money(venues.reduce((sum, venue) => sum + venue.venueSettlement, 0));
+  return { totalOpenBalance: money(open(actualFiltered, "client") + venues.reduce((sum, venue) => sum + Math.max(venue.venueSettlement, 0), 0)), venueBalance, customerBalance: open(actualFiltered, "client"), currentMonthReceivables: open(actualEvents.filter((event) => event.eventDate.startsWith(today.slice(0, 7))), "client") };
 }
 
-export function groupByVenue(events: ReceivableEvent[]): VenueReceivable[] {
+/** With a ledger, pass the complete actual event history, never a filtered period. */
+export function groupByVenue(events: ReceivableEvent[], settlements: VenueSettlement[] = []): VenueReceivable[] {
   const groups = new Map<string, ReceivableEvent[]>();
   events.forEach((event) => groups.set(event.venueId, [...(groups.get(event.venueId) ?? []), event]));
-  return [...groups.entries()].map(([venueId, rows]) => { const settlementEvents = rows.filter((event) => event.payerType === "venue" || event.venueHallFee > 0); return { venueId, venueName: rows[0].venueName, eventCount: settlementEvents.filter((event) => event.venueSettlement !== 0).length, totalBilled: settlementEvents.reduce((sum, event) => sum + event.venueSettlementBeforeHallFee, 0), paid: settlementEvents.filter((event) => event.payerType === "venue").reduce((sum, event) => sum + event.paid, 0), hallFee: settlementEvents.reduce((sum, event) => sum + event.venueHallFee, 0), venueSettlement: settlementEvents.reduce((sum, event) => sum + event.venueSettlement, 0), events: settlementEvents }; }).filter((venue) => venue.events.length > 0).sort((a, b) => a.venueName.localeCompare(b.venueName, "he"));
+  settlements.forEach((row) => { if (!groups.has(row.venueId)) groups.set(row.venueId, []); });
+  return [...groups.entries()].map(([venueId, rows]) => { const settlementEvents = rows.filter((event) => event.payerType === "venue" || event.venueHallFee > 0); return { venueId, venueName: rows[0]?.venueName ?? settlements.find((row) => row.venueId === venueId)?.venueName ?? "אולם", eventCount: settlementEvents.length, totalBilled: settlementEvents.reduce((sum, event) => sum + event.venueSettlementBeforeHallFee, 0), paid: settlementEvents.filter((event) => event.payerType === "venue").reduce((sum, event) => sum + event.paid, 0), hallFee: settlementEvents.reduce((sum, event) => sum + event.venueHallFee, 0), venueSettlement: money(settlementEvents.reduce((sum, event) => sum + event.venueSettlement, 0) - settlements.filter((row) => row.venueId === venueId).reduce((sum, row) => sum + row.amount, 0)), events: settlementEvents }; }).filter((venue) => venue.events.length > 0 || settlements.some((row) => row.venueId === venue.venueId)).sort((a, b) => a.venueName.localeCompare(b.venueName, "he"));
 }
+
+const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
 export const unpaidEvents = (events: ReceivableEvent[]) => events.filter((event) => event.outstanding > 0);
 export const unsettledVenueEvents = (events: ReceivableEvent[]) => events.filter((event) => event.venueSettlement !== 0);

@@ -11,18 +11,37 @@ export async function GET(request: Request) {
   const supabase = await createClient();
   const today = getIsraelDateOnly();
   const includeForecast = new URL(request.url).searchParams.get("includeForecast") === "true";
-  let eventsQuery = supabase.from("events").select("id, event_date, event_type, package_type, venue_id, client_name, client_phone, payer_type, guest_count, price_per_guest, vat_rate, price_includes_vat, notes").order("event_date");
-  if (!includeForecast) eventsQuery = eventsQuery.lte("event_date", today);
+  const eventsQuery = (from: number, to: number) => {
+    let query = supabase.from("events").select("id, event_date, event_type, package_type, venue_id, client_name, client_phone, payer_type, guest_count, price_per_guest, vat_rate, price_includes_vat, notes").order("event_date").order("id").range(from, to);
+    if (!includeForecast) query = query.lte("event_date", today);
+    return query;
+  };
   const [eventsResult, venuesResult] = await Promise.all([
-    eventsQuery,
-    supabase.from("venues").select("id, name"),
+    readPages<EventRow>(eventsQuery),
+    readPages<VenueRow>((from, to) => supabase.from("venues").select("id, name").order("id").range(from, to)),
   ]);
   const eventRows = (eventsResult.data ?? []) as EventRow[];
-  const paymentsResult = eventRows.length ? await supabase.from("event_payments").select("event_id, amount, paid_at, payment_method").in("event_id", eventRows.map((event) => event.id)) : { data: [] as PaymentRow[], error: null };
+  const paymentsResult: { data: PaymentRow[]; error: { message: string } | null } = { data: [], error: null };
+  for (let offset = 0; offset < eventRows.length; offset += 100) {
+    const ids = eventRows.slice(offset, offset + 100).map((event) => event.id);
+    const batch = await readPages<PaymentRow>((from, to) => supabase.from("event_payments").select("event_id, amount, paid_at, payment_method").in("event_id", ids).order("id").range(from, to));
+    if (batch.error) { paymentsResult.error = batch.error; break; }
+    paymentsResult.data.push(...batch.data);
+  }
   const error = eventsResult.error ?? venuesResult.error ?? paymentsResult.error;
   if (error) return Response.json({ error: error.message }, { status: 400 });
   const venues = new Map((venuesResult.data as VenueRow[]).map((venue) => [venue.id, venue.name]));
   const payments = new Map<string, { amount: number; paidAt: string; paymentMethod: string }[]>();
   (paymentsResult.data as PaymentRow[]).forEach((payment) => payments.set(payment.event_id, [...(payments.get(payment.event_id) ?? []), { amount: Number(payment.amount), paidAt: payment.paid_at, paymentMethod: payment.payment_method }]));
   return Response.json(eventRows.map((event) => ({ id: event.id, eventDate: event.event_date, eventType: event.event_type, packageType: event.package_type, venueId: event.venue_id, venueName: venues.get(event.venue_id) ?? "אולם לא ידוע", clientName: event.client_name, clientPhone: event.client_phone ?? "", payerType: event.payer_type, guestCount: event.guest_count, pricePerGuest: Number(event.price_per_guest), vatRate: Number(event.vat_rate), priceIncludesVat: event.price_includes_vat, notes: event.notes ?? "", payments: payments.get(event.id) ?? [] })));
+}
+
+async function readPages<T>(query: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>) {
+  const data: T[] = [];
+  for (let offset = 0; ; offset += 500) {
+    const page = await query(offset, offset + 499);
+    if (page.error) return { data, error: page.error };
+    data.push(...(page.data ?? []));
+    if (!page.data || page.data.length < 500) return { data, error: null };
+  }
 }

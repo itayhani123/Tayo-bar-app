@@ -1,4 +1,7 @@
 "use client";
+import { useVenueSettlements } from "@/features/receivables/hooks/use-venue-settlements";
+import { calculateReceivablesSummary, groupByVenue } from "@/features/receivables/utils/receivables-policy";
+
 import Link from "next/link";
 import { useState } from "react";
 import { AlertCircle, ChevronLeft, ChevronRight, LoaderCircle } from "lucide-react";
@@ -9,7 +12,7 @@ import { calculateIncomeTaxAdvance, calculateOperationalProfit, calculateVat } f
 import { formatDate, formatMoney, paymentStatusLabels, translateStoredValue } from "@/lib/hebrew";
 import { useDashboard } from "../hooks/use-dashboard";
 import type { DashboardEvent, DashboardWarning, Readiness } from "../types";
-import { actualPaymentStatus, assignmentSalary, buildWarnings, eventReadiness, eventStaffCost, recommendedBartenders } from "../utils/dashboard-calculations";
+import { actualPaymentStatus, assignmentSalary, buildWarnings,calculateVenueProfitability, eventReadiness, eventStaffCost, recommendedBartenders } from "../utils/dashboard-calculations";
 import { useReceivables } from "@/features/receivables/hooks/use-receivables";
 import { calculateReceivableEvent } from "@/features/receivables/utils/receivables-calculations";
 
@@ -34,6 +37,10 @@ export function DashboardPage({ access }: { access: DashboardAccess }) {
   const operationalProfit = calculateOperationalProfit(netRevenue, staffCost, alcoholCost);
   const taxAdvances = calculateIncomeTaxAdvance(netRevenue, incomeTaxRate.data ?? 3.2);
   const estimatedAfterAdvances = operationalProfit - taxAdvances;
+  const venueProfitability =
+  calculateVenueProfitability(
+    data.monthlyEvents,
+  );
   const employeeTotals = new Map<string, number>();
   const employeeNames = new Map<string, string>();
   data.monthlyEvents.flatMap((event) => event.assignments).forEach((assignment) => { employeeTotals.set(assignment.employeeId, (employeeTotals.get(assignment.employeeId) ?? 0) + (assignmentSalary(assignment) ?? 0)); employeeNames.set(assignment.employeeId, assignment.employeeName); });
@@ -42,7 +49,18 @@ export function DashboardPage({ access }: { access: DashboardAccess }) {
   if (access === "manager") warnings = warnings.filter((warning) => warning.kind === "staffing" || warning.kind === "info");
 
   return <div className="mx-auto max-w-7xl space-y-6"><header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-medium text-muted-foreground">תפעול</p><h2 className="mt-1 text-2xl font-semibold">מרכז בקרה</h2><p className="mt-2 text-sm text-muted-foreground">תמונת מצב חודשית ופעילות קרובה.</p></div><MonthPicker month={month} onChange={setMonth} /></header>
-    {access === "owner" && <><div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Kpi label="הכנסות בפועל החודש לפני מע״מ" value={formatMoney(netRevenue)} /><Kpi label="מע״מ עסקאות בפועל" value={formatMoney(vatAmount)} /><Kpi label="הכנסות בפועל החודש כולל מע״מ" value={formatMoney(grossRevenue)} /><Kpi label="מקדמות מס הכנסה משוערות" value={formatMoney(taxAdvances)} /><Kpi label="עלות עובדים בפועל" value={formatMoney(staffCost)} /><Kpi label="עלות אלכוהול בפועל" value={formatMoney(alcoholCost)} /><Kpi label="רווח בפועל החודש לפני מס" value={formatMoney(operationalProfit)} /><Kpi label="יתרה לאחר מקדמות" value={formatMoney(estimatedAfterAdvances)} /></div><DashboardReceivables/><MonthlyBreakdown revenue={netRevenue} staff={staffCost} alcohol={alcoholCost} profit={operationalProfit} /></>}
+    {access === "owner" && <><div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Kpi label="הכנסות בפועל החודש לפני מע״מ" value={formatMoney(netRevenue)} /><Kpi label="מע״מ עסקאות בפועל" value={formatMoney(vatAmount)} /><Kpi label="הכנסות בפועל החודש כולל מע״מ" value={formatMoney(grossRevenue)} /><Kpi label="מקדמות מס הכנסה משוערות" value={formatMoney(taxAdvances)} /><Kpi label="עלות עובדים בפועל" value={formatMoney(staffCost)} /><Kpi label="עלות אלכוהול בפועל" value={formatMoney(alcoholCost)} /><Kpi label="רווח בפועל החודש לפני מס" value={formatMoney(operationalProfit)} /><Kpi label="יתרה לאחר מקדמות" value={formatMoney(estimatedAfterAdvances)} /></div>
+    <DashboardReceivables/>
+<VenueProfitabilitySection venues={venueProfitability}/>
+
+<MonthlyBreakdown
+  revenue={netRevenue}
+  staff={staffCost}
+  alcohol={alcoholCost}
+  profit={operationalProfit}
+/>
+    
+    <MonthlyBreakdown revenue={netRevenue} staff={staffCost} alcohol={alcoholCost} profit={operationalProfit} /></>}
     <section><h3 className="mb-3 text-lg font-semibold">היום</h3>{data.todayEvents.length ? <div className="grid gap-3 lg:grid-cols-2">{data.todayEvents.map((event) => <TodayEvent key={event.id} event={event} />)}</div> : <Empty text="אין אירועים היום" />}</section>
     <div className="grid gap-6 xl:grid-cols-2"><section><h3 className="mb-3 text-lg font-semibold">השבוע הקרוב</h3>{data.upcomingEvents.length ? <div className="space-y-3">{data.upcomingEvents.map((event) => <UpcomingEvent key={event.id} event={event} />)}</div> : <Empty text="אין אירועים בשבוע הקרוב" />}</section><Warnings warnings={warnings} /></div>
     {access === "owner" && <RecentEvents events={data.recentEvents} />}
@@ -53,11 +71,145 @@ function TodayEvent({ event }: { event: DashboardEvent }) { return <Link href={`
 function UpcomingEvent({ event }: { event: DashboardEvent }) { return <Link href={`/events?event=${event.id}`} className="block rounded-xl border border-border bg-card p-4 shadow-sm transition hover:border-primary/30"><div className="flex items-start justify-between gap-3"><div><p className="font-medium">{formatDate(event.eventDate)} · {event.startTime.slice(0, 5)}</p><p className="mt-1 text-sm text-muted-foreground">{event.venueName} · {event.guestCount} אורחים</p></div><ReadinessBadge event={event} /></div><p className="mt-3 text-xs text-muted-foreground">עובדים משובצים: {event.assignments.length} · ברמנים מומלצים: {recommendedBartenders(event.guestCount)}</p></Link>; }
 function Warnings({ warnings }: { warnings: DashboardWarning[] }) { return <section><h3 className="mb-3 text-lg font-semibold">דורש טיפול</h3>{warnings.length ? <div className="space-y-2">{warnings.slice(0, 14).map((warning) => <Link key={warning.id} href={warning.href} className={`block rounded-lg border p-3 text-sm ${warning.kind === "staffing" ? "border-red-200 bg-red-50 text-red-800" : warning.kind === "info" ? "border-blue-200 bg-blue-50 text-blue-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>{warning.message}</Link>)}</div> : <Empty text="אין משימות פתוחות" />}</section>; }
 function RecentEvents({ events }: { events: DashboardEvent[] }) { return <section><h3 className="mb-3 text-lg font-semibold">אירועים אחרונים</h3><div className="overflow-hidden rounded-xl border border-border bg-card">{events.map((event) => { const created = Math.abs(new Date(event.updatedAt).getTime() - new Date(event.createdAt).getTime()) < 60000; return <Link key={event.id} href={`/events?event=${event.id}`} className="flex flex-col gap-1 border-b border-border px-4 py-3 last:border-0 sm:flex-row sm:items-center sm:justify-between"><span className="text-sm font-medium">{event.clientName} · {event.venueName}</span><span className="text-xs text-muted-foreground">{created ? "אירוע נוצר" : "אירוע עודכן"} · {new Intl.DateTimeFormat("he-IL", { dateStyle: "short", timeStyle: "short" }).format(new Date(event.updatedAt))}</span></Link>; })}</div></section>; }
+function VenueProfitabilitySection({
+  venues,
+}: {
+  venues: ReturnType<
+    typeof calculateVenueProfitability
+  >;
+}) {
+  if (!venues.length) {
+    return (
+      <section>
+        <h3 className="mb-3 text-lg font-semibold">
+          רווחיות לפי אולם
+        </h3>
+
+        <Empty text="אין אירועים בחודש שנבחר" />
+      </section>
+    );
+  }
+
+  return (
+    <section>
+      <div className="mb-3">
+        <h3 className="text-lg font-semibold">
+          רווחיות לפי אולם
+        </h3>
+
+        <p className="mt-1 text-sm text-muted-foreground">
+          הכנסות, משכורות, אלכוהול ורווח
+          לפי אולם בחודש שנבחר
+        </p>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {venues.map((venue) => (
+          <div
+            key={venue.venueName}
+            className="rounded-xl border border-border bg-card p-5 shadow-sm"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h4 className="text-lg font-semibold">
+                  {venue.venueName}
+                </h4>
+
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {venue.eventCount} אירועים ·{" "}
+                  {venue.guestCount.toLocaleString(
+                    "he-IL",
+                  )}{" "}
+                  אורחים
+                </p>
+              </div>
+
+              <div className="text-left">
+                <p className="text-xs text-muted-foreground">
+                  רווח תפעולי
+                </p>
+
+                <p
+                  className={`mt-1 text-xl font-bold ${
+                    venue.profit >= 0
+                      ? "text-emerald-600"
+                      : "text-red-600"
+                  }`}
+                >
+                  {formatMoney(venue.profit)}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <VenueMetric
+                label="הכנסות נטו"
+                value={venue.netRevenue}
+              />
+
+              <VenueMetric
+                label="משכורות"
+                value={venue.staffCost}
+              />
+
+              <VenueMetric
+                label="עלות אלכוהול"
+                value={venue.alcoholCost}
+              />
+
+              <VenueMetric
+                label="הכנסות כולל מע״מ"
+                value={venue.grossRevenue}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function VenueMetric({
+  label,
+  value,
+}: {
+  label: string;
+  value: number;
+}) {
+  return (
+    <div className="rounded-lg bg-muted/50 p-3">
+      <p className="text-xs text-muted-foreground">
+        {label}
+      </p>
+
+      <p className="mt-1 font-semibold">
+        {formatMoney(value)}
+      </p>
+    </div>
+  );
+}
 function MonthlyBreakdown({ revenue, staff, alcohol, profit }: { revenue: number; staff: number; alcohol: number; profit: number }) { const max = Math.max(revenue, staff, alcohol, Math.abs(profit), 1); return <section className="rounded-xl border border-border bg-card p-5 shadow-sm"><h3 className="font-semibold">פירוט בפועל לחודש</h3><div className="mt-4 grid gap-4 sm:grid-cols-2">{[["הכנסה בפועל לפני מע״מ", revenue, "bg-black"], ["עלות עובדים בפועל", staff, "bg-slate-700"], ["עלות אלכוהול בפועל", alcohol, "bg-slate-400"], ["רווח בפועל", profit, profit >= 0 ? "bg-slate-900" : "bg-red-500"]].map(([label, value, color]) => <div key={String(label)}><div className="flex justify-between text-sm"><span>{label}</span><span>{formatMoney(Number(value))}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-muted"><div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, Math.abs(Number(value)) / max * 100)}%` }} /></div></div>)}</div></section>; }
 function MonthPicker({ month, onChange }: { month: string; onChange: (month: string) => void }) { return <div className="flex items-center gap-2"><Button type="button" variant="outline" size="icon" onClick={() => onChange(moveMonth(month, -1))} aria-label="החודש הקודם"><ChevronRight /></Button><label className="text-sm">חודש<input type="month" value={month} onChange={(event) => onChange(event.target.value)} className="mr-2 h-9 rounded-lg border border-input bg-background px-3" /></label><Button type="button" variant="outline" size="icon" onClick={() => onChange(moveMonth(month, 1))} aria-label="החודש הבא"><ChevronLeft /></Button></div>; }
 function ReadinessBadge({ event }: { event: DashboardEvent }) { const readiness = eventReadiness(event); return <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${readinessClasses[readiness]}`}>{readinessLabels[readiness]}</span>; }
 function Kpi({ label, value }: { label: string; value: string }) { return <div className="rounded-xl border border-border bg-card p-4 shadow-sm"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-lg font-semibold">{value}</p></div>; }
-function DashboardReceivables(){const query=useReceivables();if(query.isLoading)return <div className="h-28 animate-pulse rounded-xl bg-muted"/>;if(!query.data)return null;const today=todayDate();const open=query.data.filter(e=>e.eventDate<=today).map(calculateReceivableEvent).filter(e=>e.outstanding>0);const venue=open.filter(e=>e.payerType==="venue");const clients=open.filter(e=>e.payerType==="client");const groups=[...new Map(venue.map(e=>[e.venueId,{id:e.venueId,name:e.venueName,events:venue.filter(v=>v.venueId===e.venueId)}])).values()];return <section className="space-y-3"><div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Kpi label="יתרה כוללת לגבייה" value={formatMoney(open.reduce((s,e)=>s+e.outstanding,0))}/><Kpi label="יתרה מאולמות" value={formatMoney(venue.reduce((s,e)=>s+e.outstanding,0))}/><Kpi label="יתרה מלקוחות" value={formatMoney(clients.reduce((s,e)=>s+e.outstanding,0))}/><Kpi label="אירועים פתוחים" value={String(open.length)}/></div>{groups.length>0&&<div><h3 className="mb-2 font-semibold">יתרה לפי אולם</h3><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{groups.map(group=><Link key={group.id} href={`/receivables?venueId=${group.id}`} className="rounded-xl border bg-card p-4 hover:border-black"><p className="font-medium">{group.name}</p><p className="mt-1 text-xs text-muted-foreground">{group.events.length} אירועים פתוחים</p><p className="mt-2 font-semibold text-red-700">{formatMoney(group.events.reduce((s,e)=>s+e.outstanding,0))}</p></Link>)}</div></div>}</section>}
+function DashboardReceivables() {
+  const query = useReceivables();
+  const ledger = useVenueSettlements();
+  if (query.isLoading || ledger.isLoading) return <div className="h-28 animate-pulse rounded-xl bg-muted" />;
+  if (query.isError || ledger.isError) return <p role="alert">לא ניתן לטעון יתרות. <button onClick={() => { void query.refetch(); void ledger.refetch(); }}>נסה שוב</button></p>;
+  const today = todayDate();
+  const events = (query.data ?? []).filter((event) => event.eventDate <= today).map(calculateReceivableEvent);
+  const summary = calculateReceivablesSummary(events, events, today, ledger.data ?? []);
+  const groups = groupByVenue(events, ledger.data ?? []).filter((venue) => venue.venueSettlement !== 0);
+  return <section className="space-y-3">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+      <Kpi label="יתרה כוללת לגבייה" value={formatMoney(summary.totalOpenBalance)} />
+      <Kpi label="יתרה מול אולמות לאחר סגירות" value={formatMoney(summary.venueBalance)} />
+      <Kpi label="יתרה מלקוחות" value={formatMoney(summary.customerBalance)} />
+    </div>
+    {!!groups.length && <div><h3 className="mb-2 font-semibold">יתרה מצטברת לפי אולם</h3><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{groups.map((venue) => <Link key={venue.venueId} href={`/receivables?venueId=${venue.venueId}`} className="rounded-xl border bg-card p-4 hover:border-black"><p className="font-medium">{venue.venueName}</p><p className="mt-2 font-semibold">{venue.venueSettlement > 0 ? "לקבל מהאולם: " : "לשלם לאולם: "}{formatMoney(Math.abs(venue.venueSettlement))}</p></Link>)}</div></div>}
+  </section>;
+}
 function Small({ label, value }: { label: string; value: string }) { return <div><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1">{value}</p></div>; }
 function Empty({ text }: { text: string }) { return <div className="grid min-h-28 place-items-center rounded-xl border border-dashed border-border bg-card p-6 text-sm text-muted-foreground">{text}</div>; }
 function DashboardSkeleton() { return <div className="mx-auto max-w-7xl space-y-6"><div className="h-20 animate-pulse rounded-xl bg-muted" /><div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{Array.from({ length: 8 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-muted" />)}</div><div className="grid gap-6 lg:grid-cols-2"><div className="h-72 animate-pulse rounded-xl bg-muted" /><div className="h-72 animate-pulse rounded-xl bg-muted" /></div></div>; }
