@@ -1,10 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-
-export type LogoutState = { error: string | null };
 
 export async function signIn(formData: FormData) {
   const email = String(formData.get("email") ?? "").trim();
@@ -22,14 +19,4 @@ export async function signIn(formData: FormData) {
   }
 
   redirect("/dashboard");
-}
-
-export async function logout(_previousState: LogoutState, _formData: FormData): Promise<LogoutState> {
-  const supabase = await createClient();
-  const { error } = await supabase.auth.signOut();
-
-  if (error) return { error: "לא ניתן להתנתק כרגע. נסה שוב." };
-
-  revalidatePath("/", "layout");
-  redirect("/login");
 }
