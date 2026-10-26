@@ -1,3 +1,4 @@
+import { applyVenueSettlements } from "../utils/venue-settlements";
 import * as XLSX from "xlsx";
 import { translateStoredValue } from "@/lib/hebrew";
 import type { ReceivableEvent } from "../types";
@@ -8,17 +9,17 @@ const MONEY_FORMAT = '[$₪-he-IL]#,##0.00';
 const HEADER_ROW = 4;
 export const venueExportColumns = ["תאריך", "לקוח", "סוג אירוע", "תפריט", "מספר אורחים", "משלם", "יתרה לפני עמלה", "עמלה לאולם", "יתרה נטו מול האולם"] as const;
 
-export function createVenueWorkbook(venueName: string, sourceEvents: ReceivableEvent[], settlements: VenueSettlement[] = []): XLSX.WorkBook {
-  const events = [...sourceEvents].sort((a, b) => a.eventDate.localeCompare(b.eventDate));
+export function createVenueWorkbook(venueName: string, sourceEvents: ReceivableEvent[], settlements: VenueSettlement[] = [], history = false): XLSX.WorkBook {
+  const events = (history ? [...sourceEvents] : applyVenueSettlements(sourceEvents, settlements).filter((event) => event.venueSettlement !== 0)).sort((a, b) => a.eventDate.localeCompare(b.eventDate));
   const totalBeforeHallFee = events.reduce((sum, event) => sum + event.venueSettlementBeforeHallFee, 0);
   const totalSettlement = events.reduce((sum, event) => sum + event.venueSettlement, 0);
   const totalHallFee = events.reduce((sum, event) => sum + event.venueHallFee, 0);
   const rows: (string | number | Date)[][] = [
-    ["דוח התחשבנות מצטבר — סכומי אירועים לפני סגירות"],
+    [history ? "דוח היסטוריית התחשבנות" : "דוח יתרות פתוחות לגבייה"],
     [`אולם: ${venueName}`],
     [],
     [...venueExportColumns],
-    ...events.map((event) => [excelDate(event.eventDate), event.clientName, translateStoredValue(event.eventType), translateStoredValue(event.packageType), event.guestCount, event.payerType === "venue" ? "אולם" : "לקוח", event.venueSettlementBeforeHallFee, -event.venueHallFee, event.venueSettlement]),
+    ...events.map((event) => [excelDate(event.eventDate), event.clientName, translateStoredValue(event.eventType), translateStoredValue(event.packageType), event.guestCount, event.venueSettlementBeforeHallFee === 0 && event.venueHallFee !== 0 ? "עמלת אולם בלבד" : event.payerType === "venue" ? "אולם" : "לקוח", event.venueSettlementBeforeHallFee, -event.venueHallFee, event.venueSettlement]),
     ["סה״כ להתחשבנות", "", "", "", "", "", totalBeforeHallFee, -totalHallFee, totalSettlement],
   ];
   const sheet = XLSX.utils.aoa_to_sheet(rows, { cellDates: true, dateNF: "dd/mm/yyyy" });
@@ -31,27 +32,33 @@ export function createVenueWorkbook(venueName: string, sourceEvents: ReceivableE
   for (let index = 0; index < events.length; index += 1) { setMoney(sheet[`G${HEADER_ROW + 1 + index}`]); setMoney(sheet[`H${HEADER_ROW + 1 + index}`]); setMoney(sheet[`I${HEADER_ROW + 1 + index}`]); }
   const totalRow = HEADER_ROW + events.length + 1; makeBold(sheet[`A${totalRow}`]); makeBold(sheet[`G${totalRow}`]); makeBold(sheet[`H${totalRow}`]); makeBold(sheet[`I${totalRow}`]); setMoney(sheet[`G${totalRow}`]); setMoney(sheet[`H${totalRow}`]); setMoney(sheet[`I${totalRow}`]);
   const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, sheet, "יתרה לגבייה");
+  const rawTotal = sourceEvents.reduce((sum, event) => sum + event.venueSettlement, 0);
   const closed = Math.round(settlements.reduce((sum, row) => sum + row.amount, 0) * 100) / 100;
   const ledgerSheet = XLSX.utils.aoa_to_sheet([
     ["סגירות מצטברות — סכום חיובי: האולם חייב לטאיו; שלילי: טאיו חייבת לאולם"],
-    ["תאריך חתך כולל", "סכום סגירה חתום", "נרשם בתאריך", "נרשם על ידי", "מזהה סגירה"],
-    ...settlements.map((row) => [row.cutoffDate, row.amount, row.createdAt, row.createdBy, row.id]),
-    ["סכומי אירועים לפני סגירות", Math.round(totalSettlement * 100) / 100],
+    ["תאריך חתך כולל", "סכום סגירה חתום", "נרשם בתאריך", "נרשם על ידי", "מזהה סגירה", "מצב עמלה"],
+    ...settlements.map((row) => [row.cutoffDate, row.amount, row.createdAt, row.createdBy, row.id, row.includesHallFee !== false ? "כולל עמלה" : "ללא עמלה"]),
+    ["סכומי אירועים לפני סגירות", Math.round(rawTotal * 100) / 100],
     ["סך סגירות", closed],
-    ["יתרה מצטברת לאחר סגירות", Math.round((totalSettlement - closed) * 100) / 100],
+    ["יתרה מצטברת לאחר סגירות", Math.round((rawTotal - closed) * 100) / 100],
   ]);
   ledgerSheet["!views"] = [{ RTL: true }];
   ledgerSheet["!cols"] = [{ wch: 38 }, { wch: 22 }, { wch: 30 }, { wch: 38 }, { wch: 38 }];
   for (let row = 3; row <= settlements.length + 5; row++) setMoney(ledgerSheet[`B${row}`]);
-  XLSX.utils.book_append_sheet(workbook, ledgerSheet, "סגירות ויתרה");
+  if (history) {
+    XLSX.utils.book_append_sheet(workbook, ledgerSheet, "סגירות ויתרה");
+    const allocationsSheet = XLSX.utils.aoa_to_sheet([["מזהה סגירה", "מזהה אירוע", "תאריך אירוע בעת הסגירה", "לקוח בעת הסגירה", "תשלום שנסגר", "עמלה שנסגרה", "נטו שנסגר"], ...settlements.flatMap((row) => (row.allocations ?? []).map((allocation) => [row.id, allocation.eventId, allocation.event?.eventDate ?? "", allocation.event?.clientName ?? "", allocation.payment, allocation.hallFee, allocation.payment - allocation.hallFee]))]);
+    allocationsSheet["!views"] = [{ RTL: true }];
+    XLSX.utils.book_append_sheet(workbook, allocationsSheet, "שיוך סגירות לאירועים");
+  }
   return workbook;
 }
 
-export function exportVenueWorkbook(venueId: string, venueName: string, events: ReceivableEvent[], today: string, settlements: VenueSettlement[] = []) {
-  const venueEvents = venueExportEvents(events, today, venueId);
+export function exportVenueWorkbook(venueId: string, venueName: string, events: ReceivableEvent[], today: string, settlements: VenueSettlement[] = [], historyReport = false) {
+  const venueEvents = venueExportEvents(events, today, venueId, [], true);
   const history = settlements.filter((row) => row.venueId === venueId && row.cutoffDate <= today);
   if (!venueEvents.length && !history.length) return false;
-  XLSX.writeFile(createVenueWorkbook(venueName, venueEvents, history), `יתרה_לגבייה_${safeFilename(venueName)}_${today}.xlsx`, { cellDates: true, cellStyles: true }); return true;
+  XLSX.writeFile(createVenueWorkbook(venueName, venueEvents, history, historyReport), `${historyReport ? "היסטוריית_התחשבנות" : "יתרות_פתוחות"}_${safeFilename(venueName)}_${today}.xlsx`, { cellDates: true, cellStyles: true }); return true;
 }
 function setMoney(cell: XLSX.CellObject | undefined) { if (cell) cell.z = MONEY_FORMAT; }
 function makeBold(cell: XLSX.CellObject | undefined) { if (cell) cell.s = { ...cell.s, font: { ...cell.s?.font, bold: true } }; }

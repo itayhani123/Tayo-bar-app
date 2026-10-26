@@ -1,4 +1,5 @@
 "use client";
+import { applyVenueSettlements } from "../utils/venue-settlements";
 
 import Link from "next/link";
 import { useVenueSettlements } from "../hooks/use-venue-settlements";
@@ -182,7 +183,7 @@ export function ReceivablesPage() {
    * טבלת האולם מכבדת גם את venueId.
    */
   const venueRows =
-    groupByVenue(filtered);
+    groupByVenue(filterReceivables(applyVenueSettlements(allEvents, settlements), scope, today, venueId, eventType)).filter((venue) => venue.events.length > 0);
 
   /*
    * יתרות לקוחות.
@@ -211,6 +212,7 @@ export function ReceivablesPage() {
   const exportVenue = async (
     id: string,
     name: string,
+    history = false,
   ) => {
     const rows = venueExportEvents(
       allEvents,
@@ -238,6 +240,7 @@ export function ReceivablesPage() {
       allEvents,
       today,
       settlements,
+      history,
     );
   };
 
@@ -428,6 +431,7 @@ export function ReceivablesPage() {
                       </p>
                     </button>
 
+                    <Button variant="outline" className="mt-3 w-full" onClick={() => void exportVenue(venue.venueId, venue.venueName, true)}>ייצוא היסטוריית התחשבנות</Button>
                     <VenueSettlementDialog venueId={venue.venueId} venueName={venue.venueName} history={settlements.filter((row) => row.venueId === venue.venueId)} />
                     <Button
                       type="button"
@@ -442,7 +446,7 @@ export function ReceivablesPage() {
                       }
                     >
                       <Download />
-                      ייצוא דוח אקסל מצטבר
+                      ייצוא יתרות פתוחות
                     </Button>
                   </div>
                 );
@@ -577,7 +581,7 @@ export function ReceivablesPage() {
               }}
             >
               <Download />
-              ייצוא אקסל מצטבר לאולם שנבחר
+              ייצוא יתרות פתוחות לאולם שנבחר
             </Button>
           </div>
         )}
@@ -592,7 +596,7 @@ export function ReceivablesPage() {
             events,
           ) =>
             setDetails({
-              title: `סכומי אירועים לפני סגירות — ${venueName}`,
+              title: `יתרות אירועים פתוחות לאחר סגירות — ${venueName}`,
               events:
                 unsettledVenueEvents(
                   events,
@@ -664,7 +668,7 @@ function VenueTable({
   return (
     <section>
       <h3 className="mb-3 text-lg font-semibold">
-        אירועי אולם בתקופה — סכומים היסטוריים לפני סגירות
+        יתרות אולם פתוחות בתקופה — לאחר סגירות
       </h3>
 
       <div className="overflow-x-auto rounded-xl border border-border bg-card">
@@ -678,7 +682,7 @@ function VenueTable({
                 "אורחים",
                 "יתרה לפני עמלה",
                 "עמלה לאולם",
-                "סכום אירוע לפני סגירות",
+                "יתרה פתוחה מול האולם",
               ].map((label) => (
                 <th
                   className="px-4 py-3 font-medium"
@@ -725,7 +729,7 @@ function VenueTable({
                   </td>
 
                   <td className="px-4 py-3">
-                    {event.payerType ===
+                    {event.venueSettlementBeforeHallFee === 0 && event.venueHallFee !== 0 ? "עמלת אולם בלבד" : event.payerType ===
                     "venue"
                       ? "אולם"
                       : "לקוח"}
@@ -744,11 +748,9 @@ function VenueTable({
                   </td>
 
                   <td className="px-4 py-3">
-                    {event.venueHallFee >
+                    {event.venueHallFee !==
                     0
-                      ? `-${formatMoney(
-                          event.venueHallFee,
-                        )}`
+                      ? formatMoney(-event.venueHallFee)
                       : "—"}
                   </td>
 
@@ -970,14 +972,10 @@ function VenueEventDetails({
         )}
       />
 
-      {event.venueHallFee > 0 && (
+      {event.venueHallFee !== 0 && (
   <DetailRow
-    label={`עמלה לאולם (${event.venueHallFeePerGuest} ₪ × ${event.venueHallFeeGuestCount.toLocaleString(
-      "he-IL"
-    )} אורחים לחיוב)`}
-    value={`-${formatMoney(
-      event.venueHallFee
-    )}`}
+    label="עמלת אולם פתוחה"
+    value={formatMoney(-event.venueHallFee)}
   />
 )}
 

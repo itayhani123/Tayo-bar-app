@@ -20,7 +20,7 @@ test("venue Excel exports calculated balances and a negative numeric hall fee", 
 test("client-paid event exports only its negative venue fee settlement", () => {
   const event = calculateReceivableEvent({ ...raw, payerType: "client" });
   const sheet = createVenueWorkbook("אפטאון", [event]).Sheets["יתרה לגבייה"];
-  assert.equal(sheet.F5.v, "לקוח");
+  assert.equal(sheet.F5.v, "עמלת אולם בלבד");
   assert.equal(sheet.G5.v, 0);
   assert.equal(sheet.H5.v, -2100);
   assert.equal(sheet.I5.v, -2100);

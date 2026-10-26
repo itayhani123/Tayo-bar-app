@@ -1,3 +1,4 @@
+import { hydrateSettlementHistory } from "./settlement-history";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -27,6 +28,7 @@ test("PostgreSQL migration: atomic ledger, permissions, retries, stale snapshots
     await db.exec(readFileSync("supabase/migrations/002_events.sql", "utf8"));
     await db.exec(readFileSync("supabase/migrations/006_event_finance_and_colors.sql", "utf8"));
     await db.exec(readFileSync("supabase/migrations/013_venue_settlements.sql", "utf8"));
+    await db.exec(readFileSync("supabase/migrations/014_venue_settlement_allocations.sql", "utf8"));
     await db.exec(`
       grant usage on schema public, auth to authenticated, service_role, anon;
       grant select on public.profiles to authenticated;
@@ -118,6 +120,21 @@ test("PostgreSQL migration: atomic ledger, permissions, retries, stale snapshots
       assert.equal(amount, -300);
       await db.query("select public.close_venue_settlement($1,'2020-01-01',$2,$3,$4,$5::jsonb)", [negativeVenue, amount, owner, randomUUID(), JSON.stringify(source)]);
       assert.equal((await db.query<{ amount: string }>("select amount from public.venue_settlements where venue_id=$1", [negativeVenue])).rows[0].amount, "-300.00");
+    });
+    await t.test("fee choice and allocations persist; mismatched retries and invalid components are rejected", async () => {
+      const source = await snapshot();
+      const calculation = calculateVenueClosing(source.events.map(calculateReceivableEvent), hydrateSettlementHistory(source.settlements), venue, "2020-01-02", false);
+      const key = randomUUID();
+      const args = [venue, calculation.amount, owner, key, JSON.stringify(source), JSON.stringify(calculation.allocations)];
+      await assert.rejects(db.query("select public.close_venue_settlement($1,'2020-01-02',$2,$3,$4,$5::jsonb,false,'[]'::jsonb)", args.slice(0,5)), /Invalid allocations/);
+      await db.query("select public.close_venue_settlement($1,'2020-01-02',$2,$3,$4,$5::jsonb,false,$6::jsonb)", args);
+      const saved = (await db.query<{ includes_hall_fee: boolean; allocations: unknown }>("select includes_hall_fee, allocations from public.venue_settlements where request_id=$1", [key])).rows[0];
+      assert.equal(saved.includes_hall_fee, false);
+      assert.deepEqual(saved.allocations, calculation.allocations);
+      await assert.rejects(db.query("select public.close_venue_settlement($1,'2020-01-02',$2,$3,$4,$5::jsonb,true,$6::jsonb)", args), /Request ID already used/);
+      const after = await snapshot();
+      const feeClosing = calculateVenueClosing(after.events.map(calculateReceivableEvent), hydrateSettlementHistory(after.settlements), venue, "2020-01-02");
+      assert.equal(feeClosing.amount, -7);
     });
   } finally { await db.close(); }
 });

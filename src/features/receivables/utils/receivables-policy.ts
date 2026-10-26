@@ -1,3 +1,4 @@
+import { applyVenueSettlements } from "./venue-settlements";
 import type { PaymentStatus } from "@/features/events/types";
 import type { VenueSettlement } from "./venue-settlements";
 import type { ReceivableEvent, ReceivablesScope, ReceivablesSummary, VenueReceivable } from "../types";
@@ -25,7 +26,22 @@ export function groupByVenue(events: ReceivableEvent[], settlements: VenueSettle
   const groups = new Map<string, ReceivableEvent[]>();
   events.forEach((event) => groups.set(event.venueId, [...(groups.get(event.venueId) ?? []), event]));
   settlements.forEach((row) => { if (!groups.has(row.venueId)) groups.set(row.venueId, []); });
-  return [...groups.entries()].map(([venueId, rows]) => { const settlementEvents = rows.filter((event) => event.payerType === "venue" || event.venueHallFee > 0); return { venueId, venueName: rows[0]?.venueName ?? settlements.find((row) => row.venueId === venueId)?.venueName ?? "אולם", eventCount: settlementEvents.length, totalBilled: settlementEvents.reduce((sum, event) => sum + event.venueSettlementBeforeHallFee, 0), paid: settlementEvents.filter((event) => event.payerType === "venue").reduce((sum, event) => sum + event.paid, 0), hallFee: settlementEvents.reduce((sum, event) => sum + event.venueHallFee, 0), venueSettlement: money(settlementEvents.reduce((sum, event) => sum + event.venueSettlement, 0) - settlements.filter((row) => row.venueId === venueId).reduce((sum, row) => sum + row.amount, 0)), events: settlementEvents }; }).filter((venue) => venue.events.length > 0 || settlements.some((row) => row.venueId === venue.venueId)).sort((a, b) => a.venueName.localeCompare(b.venueName, "he"));
+  return [...groups.entries()].map(([venueId, rows]) => {
+    const ledger = settlements.filter((row) => row.venueId === venueId);
+    const source = rows.filter((event) => event.payerType === "venue" || event.venueHallFee !== 0 || event.venueSettlement !== 0);
+    const openEvents = applyVenueSettlements(rows, ledger).filter((event) => event.venueSettlement !== 0);
+    return {
+      venueId,
+      venueName: rows[0]?.venueName ?? ledger[0]?.venueName ?? "אולם",
+      eventCount: openEvents.length,
+      totalBilled: source.reduce((sum, event) => sum + event.venueSettlementBeforeHallFee, 0),
+      paid: source.filter((event) => event.payerType === "venue").reduce((sum, event) => sum + event.paid, 0),
+      hallFee: source.reduce((sum, event) => sum + event.venueHallFee, 0),
+      venueSettlement: money(source.reduce((sum, event) => sum + event.venueSettlement, 0) - ledger.reduce((sum, row) => sum + row.amount, 0)),
+      events: openEvents,
+    };
+  }).filter((venue) => venue.events.length > 0 || settlements.some((row) => row.venueId === venue.venueId))
+    .sort((a, b) => a.venueName.localeCompare(b.venueName, "he"));
 }
 
 const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
