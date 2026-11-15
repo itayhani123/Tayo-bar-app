@@ -3,6 +3,7 @@ import test from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { handleAttendanceRequest } from "./attendance-http";
 import { attendanceExample, extracted } from "./attendance-fixture";
+import { confirmAttendance } from "./attendance-service";
 
 test("attendance API authenticates, enforces live role, origin, quota, schema and explicit confirmation", async () => {
   let role = "manager", authenticated = true, quota = true, confirms = 0, extracts = 0, previews = 0;
@@ -34,4 +35,10 @@ test("attendance API authenticates, enforces live role, origin, quota, schema an
   // Retry confirmation remains available even when model quota/key is unavailable.
   assert.equal((await handleAttendanceRequest(request(confirm), { ...deps, configured: false })).status, 200);
   assert.equal(confirms, 1);
+});
+test("standalone confirmation cannot bypass a WhatsApp report's atomic approval and receipt path",async()=>{
+  let calls=0;let linked=true;
+  const db={from:()=>{const q={select:()=>q,eq:()=>q,limit:()=>q,abortSignal:()=>q,maybeSingle:async()=>linked?{data:{id:"report"},error:null}:{data:null,error:{code:"42P01"}}};return q;},rpc:()=>({abortSignal:async()=>{calls++;return{data:{status:"succeeded"},error:null};}})} as unknown as SupabaseClient;
+  assert.equal((await confirmAttendance(db,"actor","proposal",new AbortController().signal)).status,"forbidden");assert.equal(calls,0);
+  linked=false;assert.equal((await confirmAttendance(db,"actor","proposal",new AbortController().signal)).status,"succeeded");assert.equal(calls,1);
 });

@@ -18,6 +18,22 @@ type MetaWhatsAppResponse = {
   error?: MetaWhatsAppError;
 };
 
+/** Same Meta connection; no contact details or message bodies are logged. */
+export async function sendAttendanceReceipt(phone: string, text: string, useTemplate: boolean): Promise<string> {
+  const token = process.env.WHATSAPP_ACCESS_TOKEN, phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID, version = process.env.WHATSAPP_API_VERSION;
+  if (!token || !phoneId || !version) throw new Error("WhatsApp provider configuration is incomplete");
+  const template = process.env.WHATSAPP_TEMPLATE_ATTENDANCE_RECEIPT;
+  if (useTemplate && !template) throw new Error("Approved receipt template required");
+  const response = await fetch(`https://graph.facebook.com/${version}/${phoneId}/messages`, {
+    method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", to: phone, ...(useTemplate ? { type: "template", template: { name: template, language: { code: process.env.WHATSAPP_TEMPLATE_LANGUAGE_CODE || "he" } } } : { type: "text", text: { body: text, preview_url: false } }) }),
+    signal: AbortSignal.timeout(10000),
+  });
+  const body = await response.json().catch(() => null) as MetaWhatsAppResponse | null;
+  if (!response.ok || !body?.messages?.[0]?.id) throw new Error("Meta receipt not accepted");
+  return body.messages[0].id;
+}
+
 export async function sendWhatsAppTemplate(
   payload: WhatsAppTemplatePayload
 ): Promise<string> {

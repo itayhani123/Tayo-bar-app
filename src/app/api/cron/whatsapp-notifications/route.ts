@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { sendWhatsAppTemplate } from "@/lib/whatsapp/client";
+import { sendWhatsAppTemplate, sendAttendanceReceipt } from "@/lib/whatsapp/client";
+import { processAttendanceInbox, processAttendanceReceipt } from "@/lib/whatsapp/attendance-worker";
 import { getWhatsAppSettings } from "@/lib/whatsapp/settings";
 import { buildTemplatePayload } from "@/lib/whatsapp/templates";
 import type { NotificationContext, WhatsAppNotificationType } from "@/lib/whatsapp/types";
@@ -10,6 +11,7 @@ type NotificationRow = {
   notification_type: WhatsAppNotificationType;
   payload: NotificationContext;
 };
+export const maxDuration = 300;
 
 async function handleCron(request: Request) {
   if (
@@ -21,13 +23,18 @@ async function handleCron(request: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const admin = createAdminClient();
+  let attendanceProcessed = 0, receiptsProcessed = 0;
+  try {
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(45000)]);
+    attendanceProcessed = await processAttendanceInbox(admin, signal, { autoEnabled: process.env.WHATSAPP_ATTENDANCE_AUTO_SAVE_ENABLED === "true" });
+    receiptsProcessed = await processAttendanceReceipt(admin, sendAttendanceReceipt, signal, Boolean(process.env.WHATSAPP_TEMPLATE_ATTENDANCE_RECEIPT));
+  } catch { console.error("WhatsApp attendance queue unavailable"); }
   const settings = await getWhatsAppSettings();
 
   if (!settings.enabled) {
-    return Response.json({ processed: 0, disabled: true });
+    return Response.json({ processed: 0, disabled: true, attendanceProcessed, receiptsProcessed });
   }
-
-  const admin = createAdminClient();
 
   const { data, error } = await admin
     .from("whatsapp_notifications")
@@ -96,6 +103,7 @@ async function handleCron(request: Request) {
   }
 
   return Response.json({
+    attendanceProcessed, receiptsProcessed,
     processed: sent + failed,
     sent,
     failed,

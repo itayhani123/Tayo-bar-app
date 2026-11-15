@@ -2,6 +2,7 @@ export const UNAUTHENTICATED_SERVER_ROUTES = [
   "/api/cron/whatsapp-notifications",
   "/api/webhooks/whatsapp",
   "/offline",
+  "/privacy",
 ] as const;
 
 export function isUnauthenticatedServerRoute(pathname: string) {

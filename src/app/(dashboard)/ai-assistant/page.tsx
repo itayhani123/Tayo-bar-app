@@ -1,8 +1,9 @@
 import { requireCurrentUser } from "@/lib/auth/user";
 import { AssistantChat } from "@/features/ai-assistant/chat";
+import { WhatsAppAttendanceInbox } from "@/features/ai-assistant/whatsapp-inbox";
 
 export const metadata = { title: "Tayo AI | Tayo Bar" };
 export default async function AssistantPage() {
   const { role, user } = await requireCurrentUser();
-  return <AssistantChat key={`${user.id}:${role}`} role={role} userId={user.id} />;
+  return <><AssistantChat key={`${user.id}:${role}`} role={role} userId={user.id} /><WhatsAppAttendanceInbox role={role} /></>;
 }

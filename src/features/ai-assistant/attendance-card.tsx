@@ -12,7 +12,7 @@ export async function attendanceRequest(body: unknown) {
   return data;
 }
 const previous = (v: string | null) => v ? new Intl.DateTimeFormat("he-IL", { timeZone: "Asia/Jerusalem", dateStyle: "short", timeStyle: "short" }).format(new Date(v)) : "—";
-export function AttendanceCard({ initial, onBusyChange }: { initial: AttendancePreview; onBusyChange: (busy: boolean) => void }) {
+export function AttendanceCard({ initial, onBusyChange, request = attendanceRequest, onSaved }: { initial: AttendancePreview; onBusyChange: (busy: boolean) => void; request?: typeof attendanceRequest; onSaved?: () => void }) {
   const cache = useQueryClient();
   const [preview, setPreview] = useState(initial);
   const [rows, setRows] = useState(initial.rows);
@@ -30,11 +30,12 @@ export function AttendanceCard({ initial, onBusyChange }: { initial: AttendanceP
     try {
       if (confirm) {
         if (dirty || !preview.proposalId) return;
-        const saved = await attendanceRequest({ action: "confirm", proposalId: preview.proposalId, confirmed: true });
+        const saved = await request({ action: "confirm", proposalId: preview.proposalId, confirmed: true });
         setResult(saved);
+        onSaved?.();
         await Promise.all(["events", "event-assignments", "calendar-staffing", "calendar-finance-statuses", "dashboard", "payroll", "receivables", "income-events"].map(key => cache.invalidateQueries({ queryKey: [key] })));
       } else {
-        const next = await attendanceRequest({ action: "preview", extracted: preview.extracted, correction: { eventId: eventId || null, rows: rows.map(({ key, employeeId, start, end, note }) => ({ key, employeeId, start, end, note })) }, allowNew }) as AttendancePreview;
+        const next = await request({ action: "preview", extracted: preview.extracted, correction: { eventId: eventId || null, rows: rows.map(({ key, employeeId, start, end, note }) => ({ key, employeeId, start, end, note })) }, allowNew }) as AttendancePreview;
         setPreview(next); setRows(next.rows); setEventId(next.eventId ?? ""); setDirty(false);
       }
     } catch (e) { setError((e as Error).message); }

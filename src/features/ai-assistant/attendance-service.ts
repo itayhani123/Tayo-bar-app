@@ -59,4 +59,11 @@ export async function previewAttendance(db: SupabaseClient, actor: string, role:
   return preview;
 }
 
-export const confirmAttendance = (db: SupabaseClient, actor: string, proposalId: string, signal: AbortSignal) => rpc<{ status: string; eventId?: string; replayed?: boolean }>(db, "confirm_ai_attendance", { p_actor: actor, p_proposal: proposalId }, signal);
+export async function confirmAttendance(db: SupabaseClient, actor: string, proposalId: string, signal: AbortSignal): Promise<{ status: string; eventId?: string; replayed?: boolean }> {
+  // Inbox proposals must use its atomic attendance + receipt transaction, including retries.
+  const linked = await db.from("whatsapp_attendance_inbox").select("id").eq("proposal_id", proposalId).limit(1).abortSignal(signal).maybeSingle();
+  if (linked.data) return { status: "forbidden" };
+  // Keep standalone attendance functional on installations which only have migration 019.
+  if (linked.error && !["42P01", "PGRST205"].includes(linked.error.code)) throw new Error("INBOX_LOOKUP_FAILED");
+  return rpc(db, "confirm_ai_attendance", { p_actor: actor, p_proposal: proposalId }, signal);
+}
