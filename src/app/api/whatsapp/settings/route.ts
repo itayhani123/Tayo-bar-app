@@ -18,6 +18,7 @@ export async function PATCH(request: Request) {
   try {
     await assertOwner();
     const settings = await request.json() as WhatsAppSettings;
+    if(settings.attendanceOwnerApprovalRequired!==undefined&&typeof settings.attendanceOwnerApprovalRequired!=="boolean")return Response.json({error:"הגדרת אישור נוכחות אינה תקינה"},{status:400});
     if (!Number.isFinite(settings.hoursBefore) || settings.hoursBefore < 1 || settings.hoursBefore > 72) return Response.json({ error: "מספר השעות אינו תקין" }, { status: 400 });
     await saveWhatsAppSettings(settings);
     return Response.json({ saved: true });

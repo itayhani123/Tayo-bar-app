@@ -20,3 +20,16 @@ test("Meta webhook authenticates exact raw bytes, fails closed, scopes phone, pr
  const tampered=new Request("https://tayo.test/api/webhooks/whatsapp",{method:"POST",headers:{"x-hub-signature-256":"sha256="+createHmac("sha256",secret).update(raw).digest("hex")},body:raw+" "});
  assert.equal((await handleMetaWebhook(tampered,()=>db,{secret,phoneId:"phone-id"})).status,401);
 });
+test("same signed webhook accepts interactive decisions and exact text commands, never treats plain yes as approval",async()=>{
+ const report="11111111-1111-4111-8111-111111111111",token="22222222-2222-4222-8222-222222222222",secret="synthetic-signature";
+ const calls:{name:string;args:Record<string,unknown>}[]=[];
+ const db={rpc:async(name:string,args:Record<string,unknown>)=>{calls.push({name,args});return{data:true,error:null};}}as unknown as SupabaseClient;
+ const base={id:"wamid.decision",from:"972501234567",timestamp:String(Math.floor(Date.now()/1000))};
+ for(const message of[{...base,type:"interactive",interactive:{type:"button_reply",button_reply:{id:`attendance:confirm:${report}:${token}`}}},{...base,type:"text",text:{body:`בטל ${report} ${token}`}},{...base,type:"text",text:{body:"כן"}}]){
+  const raw=JSON.stringify({object:"whatsapp_business_account",entry:[{changes:[{value:{metadata:{phone_number_id:"phone-id"},messages:[message]}}]}]});
+  const req=new Request("https://tayo.test/api/webhooks/whatsapp",{method:"POST",headers:{"x-hub-signature-256":"sha256="+createHmac("sha256",secret).update(raw).digest("hex")},body:raw});
+  assert.equal((await handleMetaWebhook(req,()=>db,{secret,phoneId:"phone-id"})).status,200);
+ }
+ assert.equal(calls[0].name,"receive_whatsapp_attendance_decision");assert.equal(calls[0].args.p_decision,"confirm");assert.equal(calls[0].args.p_token,token);assert.equal(calls[0].args.p_inbox,report);
+ assert.equal(calls[1].args.p_decision,"cancel");assert.equal(calls[2].name,"receive_whatsapp_attendance");
+});

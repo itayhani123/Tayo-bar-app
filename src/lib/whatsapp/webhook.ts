@@ -1,12 +1,17 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { parseAttendanceDecision } from "./attendance-messages";
 
 export function validMetaSignature(raw: Uint8Array, signature: string | null, secret: string | undefined) {
   if (!secret || !signature || !/^sha256=[a-f0-9]{64}$/i.test(signature)) return false;
   return timingSafeEqual(createHmac("sha256", secret).update(raw).digest(), Buffer.from(signature.slice(7), "hex"));
 }
-const messageSchema = z.object({ id: z.string().min(1).max(500), from: z.string().regex(/^[1-9]\d{7,14}$/), timestamp: z.string().regex(/^\d{1,12}$/), type: z.literal("text"), text: z.object({ body: z.string().min(1).max(12000) }) });
+const messageBase = { id: z.string().min(1).max(500), from: z.string().regex(/^[1-9]\d{7,14}$/), timestamp: z.string().regex(/^\d{1,12}$/) };
+const messageSchema = z.discriminatedUnion("type",[
+ z.object({...messageBase,type:z.literal("text"),text:z.object({body:z.string().min(1).max(12000)})}),
+ z.object({...messageBase,type:z.literal("interactive"),interactive:z.object({type:z.literal("button_reply"),button_reply:z.object({id:z.string().max(256)})})}),
+]);
 const envelopeSchema = z.object({ object: z.literal("whatsapp_business_account"), entry: z.array(z.object({ changes: z.array(z.object({ value: z.object({ metadata: z.object({ phone_number_id: z.string() }).optional(), messages: z.array(z.unknown()).optional(), statuses: z.array(z.object({ id: z.string(), status: z.string(), errors: z.array(z.object({ title: z.string().optional() })).optional() })).optional() }) })) })) });
 export async function handleMetaWebhook(request: Request, db: () => SupabaseClient, config = { secret: process.env.WHATSAPP_APP_SECRET, phoneId: process.env.WHATSAPP_PHONE_NUMBER_ID }) {
   if (!config.secret) return new Response("Webhook signature configuration missing", { status: 503 });
@@ -36,10 +41,17 @@ export async function handleMetaWebhook(request: Request, db: () => SupabaseClie
         const parsed = messageSchema.safeParse(rawMessage); if (!parsed.success) continue;
         const message = parsed.data;
         const at = new Date(Number(message.timestamp)*1000); if (!Number.isFinite(+at) || +at>Date.now()+300000) continue;
+        const decision=parseAttendanceDecision(message.type==="interactive"?message.interactive.button_reply.id:message.text.body);
+        if(decision){
+          const stored=await admin.rpc("receive_whatsapp_attendance_decision",{p_message_id:message.id,p_phone:message.from,p_phone_id:config.phoneId,p_inbox:decision.inboxId,p_token:decision.token,p_decision:decision.decision,p_at:at.toISOString()});
+          if(stored.error)throw stored.error;
+          continue;
+        }
+        if(message.type!=="text")continue;
         const stored = await admin.rpc("receive_whatsapp_attendance", { p_message_id: message.id, p_phone: message.from, p_phone_id: config.phoneId, p_text: message.text.body, p_at: at.toISOString() });
         if (stored.error) throw stored.error;
       }
     }
     return Response.json({ received: true });
-  } catch { return new Response("Durable intake unavailable; retry", { status: 503 }); }
+  } catch { console.error("WhatsApp webhook durable intake failed",{code:"DURABLE_INTAKE_FAILED"});return new Response("Durable intake unavailable; retry", { status: 503 }); }
 }
