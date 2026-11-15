@@ -5,8 +5,9 @@ import { assertOwner } from "@/lib/auth/user";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getIsraelDateOnly } from "@/features/dashboard/utils/dashboard-date-range";
-import { calculateReceivableEvent, type RawReceivableEvent } from "@/features/receivables/utils/receivables-calculations";
-import { calculateVenueClosing, validateCutoff, type VenueSettlement } from "@/features/receivables/utils/venue-settlements";
+import { type RawReceivableEvent } from "@/features/receivables/utils/receivables-calculations";
+import { validateCutoff, type VenueSettlement } from "@/features/receivables/utils/venue-settlements";
+import { prepareVenueClosing } from "@/features/receivables/utils/prepare-closing";
 
 const inputSchema = z.object({
   action: z.enum(["preview", "confirm"]),
@@ -58,7 +59,7 @@ export async function POST(request: Request) {
     if (!snapshot.venue) return Response.json({ error: "האולם לא נמצא" }, { status: 404 });
     try { validateCutoff(input.cutoffDate, getIsraelDateOnly(), snapshot.settlements); }
     catch (error) { return Response.json({ error: (error as Error).message }, { status: 400 }); }
-    const calculation = calculateVenueClosing(snapshot.events.map(calculateReceivableEvent), hydrateSettlementHistory(snapshot.settlements), input.venueId, input.cutoffDate, input.includesHallFee);
+    const calculation = prepareVenueClosing(snapshot, input.venueId, input.cutoffDate, input.includesHallFee, getIsraelDateOnly());
     const version = createHash("sha256").update(JSON.stringify({ snapshot, cutoff: input.cutoffDate, includesHallFee: input.includesHallFee })).digest("hex");
     if (input.action === "preview") return Response.json({ ...calculation, venueName: snapshot.venue.name, version });
     if (version !== input.version) return Response.json({ error: "הנתונים השתנו. יש להציג תצוגה מקדימה חדשה ולאשר שוב" }, { status: 409 });

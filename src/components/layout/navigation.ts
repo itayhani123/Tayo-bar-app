@@ -14,7 +14,7 @@ export const navigationItems: NavigationItem[] = [
   { href: "/receivables", label: "יתרות לגבייה", icon: "income", roles: owner },
   { href: "/expenses", label: "הוצאות", icon: "expenses", roles: owner },
   { href: "/reports", label: "דוחות", icon: "reports", roles: owner },
-  { href: "/assistant", label: "עוזר AI", icon: "assistant", roles: owner },
+  { href: "/ai-assistant", label: "Tayo AI", icon: "assistant", roles: both },
   { href: "/settings", label: "הגדרות", icon: "settings", roles: owner },
   { href: "/venues", label: "אולמות", icon: "settings", roles: owner },
   { href: "/bar-packages", label: "חבילות בר", icon: "settings", roles: owner },

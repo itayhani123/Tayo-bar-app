@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import type { EventFormValues, EventRecord, VenueOption } from "../types";
+import { buildEventPayload as toPayload } from "../mutation-payload";
 
 type EventDatabaseRow = {
   id: string;
@@ -36,17 +37,6 @@ function toRecord(row: EventDatabaseRow, venueName: string): EventRecord {
     securityCheckReceived: row.security_check_received, invoiceIssued: row.invoice_issued,
     estimatedAlcoholCost: Number(row.estimated_alcohol_cost), notes: row.notes ?? "", createdAt: row.created_at, updatedAt: row.updated_at,
     salesStatus: row.sales_status, leadSource: row.lead_source ?? "", salesNotes: row.sales_notes ?? "", lastContactAt: row.last_contact_at ?? "", nextFollowUpAt: row.next_follow_up_at ?? "", proposalAmount: row.proposal_amount == null ? null : Number(row.proposal_amount), closedAt: row.closed_at ?? "",
-  };
-}
-
-function toPayload(values: EventFormValues) {
-  return {
-    event_date: values.eventDate, start_time: values.startTime, event_type: values.eventType, venue_id: values.venueId,
-    client_name: values.clientName.trim(), client_phone: values.clientPhone.trim() || null, guest_count: values.guestCount,
-    price_per_guest: values.pricePerGuest, vat_rate: values.vatRate, price_includes_vat: values.priceIncludesVat, package_type: values.packageType, payer_type: values.payerType,
-    payment_status: values.paymentStatus, manager_employee_id: values.managerEmployeeId || null,
-    security_check_received: values.securityCheckReceived, invoice_issued: values.invoiceIssued,
-    estimated_alcohol_cost: values.estimatedAlcoholCost, notes: values.notes.trim() || null,
   };
 }
 

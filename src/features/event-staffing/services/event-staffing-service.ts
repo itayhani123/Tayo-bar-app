@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import type { AssignmentFormValues, EventAssignment, EventRole, PayType } from "../types";
 import { shouldEnqueueWorkTimeUpdated } from "../work-time-notification";
+import { buildAssignmentPayload } from "../mutation-payload";
 
 type AssignmentRow = { id: string; event_id: string; employee_id: string; event_role: EventRole; pay_type: PayType; hourly_rate: number | string | null; fixed_pay: number | string | null; work_start: string | null; work_end: string | null; notes: string | null; created_at: string; updated_at: string };
 type EmployeeRow = { id: string; full_name: string; phone: string | null };
@@ -40,11 +41,8 @@ export async function createEventAssignment(
     throw new Error("employee_already_assigned");
   }
 
-  const times = assignmentTimes(
-    eventDate,
-    values.workStart,
-    values.workEnd
-  );
+  const normalized = buildAssignmentPayload(eventDate, values);
+  const times = { workStart: normalized.work_start, workEnd: normalized.work_end };
 
   const payload = {
     event_id: eventId,
@@ -102,11 +100,8 @@ export async function updateEventAssignment(
 
   if (previousError) throw previousError;
 
-  const times = assignmentTimes(
-    eventDate,
-    values.workStart,
-    values.workEnd
-  );
+  const normalized = buildAssignmentPayload(eventDate, values);
+  const times = { workStart: normalized.work_start, workEnd: normalized.work_end };
 
   const payload = {
     event_role: values.eventRole,
@@ -162,13 +157,6 @@ export async function deleteEventAssignment(id: string): Promise<void> {
   const { error } = await createClient().from("event_assignments").delete().eq("id", id);
   if (error) throw error;
   await notifyBestEffort({ action: "assignment_removed", assignmentId: id });
-}
-
-function assignmentTimes(eventDate: string, startValue: string, endValue: string) {
-  const start = startValue ? new Date(`${eventDate}T${startValue}:00`) : null;
-  const end = endValue ? new Date(`${eventDate}T${endValue}:00`) : null;
-  if (start && end && end <= start) end.setDate(end.getDate() + 1);
-  return { workStart: start?.toISOString() ?? null, workEnd: end?.toISOString() ?? null };
 }
 
 async function notifyBestEffort(body: { action: string; assignmentId: string }) {
