@@ -5,6 +5,7 @@ import { getWhatsAppSettings } from "@/lib/whatsapp/settings";
 import { buildTemplatePayload } from "@/lib/whatsapp/templates";
 import type { NotificationContext, WhatsAppNotificationType } from "@/lib/whatsapp/types";
 import { hasValidCronAuthorization } from "@/lib/whatsapp/security";
+import {drainAttendanceQueues} from "@/lib/whatsapp/attendance-queues";
 
 type NotificationRow = {
   id: string;
@@ -24,20 +25,17 @@ async function handleCron(request: Request) {
   }
 
   const admin = createAdminClient();
-  let attendanceProcessed = 0, receiptsProcessed = 0, decisionsProcessed=0;
-  try {
-    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(75000)]);
-    decisionsProcessed=await processAttendanceDecision(admin,signal);
-    attendanceProcessed = await processAttendanceInbox(admin, signal, { autoEnabled: process.env.WHATSAPP_ATTENDANCE_AUTO_SAVE_ENABLED === "true" });
-    for(let i=0;i<5&&!signal.aborted;i++){
-      const processed=await processAttendanceReceipt(admin, sendAttendanceReceipt, signal, Boolean(process.env.WHATSAPP_TEMPLATE_ATTENDANCE_RECEIPT),Boolean(process.env.WHATSAPP_TEMPLATE_ATTENDANCE_UPDATE));
-      receiptsProcessed+=processed;if(!processed)break;
-    }
-  } catch { console.error("WhatsApp attendance queue unavailable"); }
+  const attendanceQueues=await drainAttendanceQueues(request.signal,{
+    decision:signal=>processAttendanceDecision(admin,signal),
+    inbox:signal=>processAttendanceInbox(admin,signal),
+    outbox:signal=>processAttendanceReceipt(admin,sendAttendanceReceipt,signal,Boolean(process.env.WHATSAPP_TEMPLATE_ATTENDANCE_RECEIPT),Boolean(process.env.WHATSAPP_TEMPLATE_ATTENDANCE_UPDATE)),
+  });
+  const {inbox:attendanceProcessed,outbox:receiptsProcessed,decision:decisionsProcessed}=attendanceQueues.counts;
+  if(attendanceQueues.errors.length)console.error("WhatsApp attendance queue incomplete",{stages:attendanceQueues.errors});
   const settings = await getWhatsAppSettings();
 
   if (!settings.enabled) {
-    return Response.json({ processed: 0, disabled: true, attendanceProcessed, receiptsProcessed, decisionsProcessed });
+    return Response.json({ processed: 0, disabled: true, attendanceProcessed, receiptsProcessed, decisionsProcessed,attendanceQueueErrors:attendanceQueues.errors });
   }
 
   const { data, error } = await admin
@@ -107,7 +105,7 @@ async function handleCron(request: Request) {
   }
 
   return Response.json({
-    attendanceProcessed, receiptsProcessed, decisionsProcessed,
+    attendanceProcessed, receiptsProcessed, decisionsProcessed,attendanceQueueErrors:attendanceQueues.errors,
     processed: sent + failed,
     sent,
     failed,

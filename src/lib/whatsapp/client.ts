@@ -24,7 +24,7 @@ type MetaWhatsAppResponse = {
 export async function sendAttendanceReceipt(phone:string,text:string,useTemplate:boolean,buttons?:AttendanceReplyButton[],kind="result"):Promise<string>{
  const token=process.env.WHATSAPP_ACCESS_TOKEN,phoneId=process.env.WHATSAPP_PHONE_NUMBER_ID,version=process.env.WHATSAPP_API_VERSION;
  if(!token||!phoneId||!version)throw new Error("WhatsApp provider configuration is incomplete");
- return deliverAttendanceMessage({token,phoneId,version,template:kind==="result"?process.env.WHATSAPP_TEMPLATE_ATTENDANCE_RECEIPT:process.env.WHATSAPP_TEMPLATE_ATTENDANCE_UPDATE,language:process.env.WHATSAPP_TEMPLATE_LANGUAGE_CODE||"he",replyButtons:process.env.WHATSAPP_ATTENDANCE_REPLY_BUTTONS!=="false"},phone,text,useTemplate,buttons);
+ return deliverAttendanceMessage({token,phoneId,version,template:kind==="result"?process.env.WHATSAPP_TEMPLATE_ATTENDANCE_RECEIPT:process.env.WHATSAPP_TEMPLATE_ATTENDANCE_UPDATE,language:process.env.WHATSAPP_TEMPLATE_LANGUAGE_CODE||"he",replyButtons:true},phone,text,useTemplate,buttons);
 }
 export async function sendWhatsAppTemplate(
   payload: WhatsAppTemplatePayload

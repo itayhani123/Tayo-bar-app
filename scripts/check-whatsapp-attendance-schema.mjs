@@ -1,16 +1,26 @@
 // Read-only schema diagnostics. Zero-row queries, no phone numbers, user IDs, credentials or raw errors.
 // node --env-file=.env.local scripts/check-whatsapp-attendance-schema.mjs
 import { createClient } from "@supabase/supabase-js";
+import { createHash } from "node:crypto";
 const names=["NEXT_PUBLIC_SUPABASE_URL","SUPABASE_SERVICE_ROLE_KEY"];
 console.log(JSON.stringify({environment:Object.fromEntries(names.map(name=>[name,Boolean(process.env[name]?.trim())]))}));
 if(names.some(name=>!process.env[name]?.trim())){process.exitCode=1;}
 else try {
  const url=process.env.NEXT_PUBLIC_SUPABASE_URL.trim(),key=process.env.SUPABASE_SERVICE_ROLE_KEY.trim();
  const db=createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false}});
- const tables={whatsapp_attendance_senders:"phone,user_id,enabled,auto_save,updated_by,updated_at",whatsapp_attendance_inbox:"id,actor_id,phone,phone_number_id,message_text,message_at,status,proposal_id",whatsapp_attendance_receipts:"id,inbox_id,phone,status",whatsapp_attendance_audit:"id,actor_id,inbox_id,action,occurred_at",ai_attendance_imports:"id,actor_id,status",profiles:"id,role"};
+ // Compare this fingerprint between local/staging/Production without printing URLs or keys.
+ const host=new URL(url).hostname;
+ let keyProjectMatches=null;
+ try{const claims=JSON.parse(Buffer.from(key.split(".")[1],"base64url").toString("utf8"));if(typeof claims.ref==="string"&&host.endsWith(".supabase.co"))keyProjectMatches=host===`${claims.ref}.supabase.co`;}catch{}
+ console.log(JSON.stringify({supabaseEndpointFingerprint:createHash("sha256").update(host).digest("hex").slice(0,16),serviceKeyProjectMatches:keyProjectMatches}));
+ const tables={whatsapp_attendance_senders:"phone,user_id,enabled,auto_save,updated_by,updated_at",whatsapp_attendance_inbox:"id,provider_message_id,actor_id,phone,phone_number_id,message_text,message_at,received_at,status,proposal_id,event_id,error_code,extracted,preview,reviewed_by,approved_at,attempts,available_at,lease_token,lease_until,confirmation_token,confirmation_proposal,confirmation_expires_at,confirmation_code,approval_result",whatsapp_attendance_receipts:"id,inbox_id,phone,message_at,status,error_code,kind,created_at,dedupe_key,body,message_payload,part_index,attempts,available_at,lease_token,lease_until,provider_message_id,sent_at",whatsapp_attendance_decisions:"id,provider_message_id,inbox_id,phone,actor_id,decision,token,message_at,received_at,status,attempts,lease_token,lease_until,result,source_type,reply_context_message_id",whatsapp_attendance_audit:"id,actor_id,inbox_id,action,occurred_at",ai_attendance_imports:"id,actor_id,status",profiles:"id,role"};
  for(const[table,fields]of Object.entries(tables)){
   const result=await db.from(table).select(fields).limit(0).abortSignal(AbortSignal.timeout(8000));
   console.log(JSON.stringify({table,available:!result.error,code:result.error?.code||null}));if(result.error)process.exitCode=1;
+  if(["42703","PGRST204"].includes(result.error?.code))for(const column of fields.split(",")){
+   const checked=await db.from(table).select(column).limit(0).abortSignal(AbortSignal.timeout(8000));
+   console.log(JSON.stringify({table,column,available:!checked.error,code:checked.error?.code||null}));
+  }
  }
  const auth=await db.auth.admin.listUsers({page:1,perPage:1});
  console.log(JSON.stringify({adminAuthentication:!auth.error,status:auth.error?.status??200}));if(auth.error)process.exitCode=1;
@@ -24,7 +34,7 @@ else try {
  if(!response.ok){console.log(JSON.stringify({metadataAvailable:false,status:response.status}));process.exitCode=1;}
  else{
   const spec=await response.json();
-  for(const name of["configure_whatsapp_attendance_sender","receive_whatsapp_attendance","review_whatsapp_attendance","approve_whatsapp_attendance","confirm_ai_attendance","checkpoint_ai_turn"]){
+  for(const name of["configure_whatsapp_attendance_sender","receive_whatsapp_attendance","review_whatsapp_attendance","approve_whatsapp_attendance","confirm_ai_attendance","checkpoint_ai_turn","complete_whatsapp_attendance_analysis","receive_whatsapp_attendance_decision","claim_whatsapp_attendance_decision","execute_whatsapp_attendance_decision","whatsapp_attendance_service_window","queue_whatsapp_attendance_failure","receive_whatsapp_attendance_short_decision","receive_whatsapp_attendance_button","bind_whatsapp_attendance_proposal","ack_whatsapp_attendance_receipt","request_whatsapp_attendance_correction"]){
    const operation=spec.paths?.[`/rpc/${name}`]?.post;
    const parameter=operation?.parameters?.find(p=>p.in==="body")?.schema;
    console.log(JSON.stringify({rpc:name,available:Boolean(operation),arguments:parameter?.properties?Object.keys(parameter.properties):null}));if(!operation)process.exitCode=1;

@@ -1,5 +1,4 @@
 import type { AttendancePreview } from "@/features/ai-assistant/attendance";
-import { formatDuration } from "@/features/event-staffing/calculations";
 
 export type AttendanceReplyButton = { id: string; title: string };
 export function splitAttendanceMessage(text: string, limit = 3500): string[] {
@@ -15,21 +14,35 @@ export function splitAttendanceMessage(text: string, limit = 3500): string[] {
 }
 export function attendanceSummary(preview: AttendancePreview): string[] {
   const event = preview.events.find(e => e.id === preview.eventId);
-  const lines = ["סיכום דיווח נוכחות — טרם נשמר", event ? `${event.venueName} · ${event.client_name} · ${event.event_date}` : "האירוע או התאריך אינם מזוהים בוודאות", `עובדים שזוהו: ${preview.rows.filter(r=>r.employeeId).length}`, "שעות לפי שעון ישראל:"];
+  const valid = Boolean(event && preview.rows.length && !preview.issues.length && preview.rows.every(row => row.employeeId && !row.issues.length));
+  const lines = [valid ? "📋 דיווח נוכחות לאישור" : "⚠️ לא ניתן לשמור את הדיווח."];
+  if(event) lines.push(`📍 ${event.venueName} — ${event.client_name}`,`📅 ${event.event_date.split("-").reverse().join(".")}`);
+  else lines.push(preview.events.length>1 ? `לא נמצאה התאמה חד־משמעית לאירוע ב${preview.extracted.venue || "אולם שצוין"}. בדקו את האולם והתאריך.` : `לא מצאתי אירוע מתאים ב${preview.extracted.venue || "אולם שצוין"}. בדקו את האולם והתאריך.`);
+  if(preview.rows.length>1)lines.push(`👥 ${preview.rows.filter(row=>row.employeeId).length} עובדים זוהו`);
   for (const row of preview.rows) {
-    lines.push(`${row.name}: ${row.start || "כניסה חסרה"}–${row.end || "יציאה חסרה"}${row.start && row.end && row.end<row.start ? " למחרת" : ""}${row.minutes===null?"":` · ${formatDuration(row.minutes)}`}${row.employeeId?"":" · עובד לא מזוהה"}`);
+    lines.push("",`👤 ${row.name}`);
+    if(!row.employeeId){lines.push(row.candidates.length>1?`השם "${row.name}" מתאים לכמה עובדים. שלחו שם מלא.`:`לא מצאתי במערכת עובד בשם "${row.name}".`);continue;}
+    lines.push(`🕒 ${row.start || "כניסה חסרה"}–${row.end || "יציאה חסרה"}${row.start && row.end && row.end<row.start ? " למחרת" : ""}`);
+    if(row.minutes!==null)lines.push(`⏱️ ${durationText(row.minutes)}`);
     if (row.note) lines.push(`הערה: ${row.note}`);
-    lines.push(...row.issues.map(issue=>`⚠ ${issue}`));
-    if (row.operation === "create") lines.push("⚠ העובד אינו משובץ — נדרש אישור נפרד באפליקציה");
+    lines.push(...row.issues.map(issue=>`⚠️ ${issue}`));
+    if (row.operation === "create") lines.push("ℹ️ העובד יתווסף לשיבוץ האירוע בעת האישור.");
+    else if(row.previousStart||row.previousEnd)lines.push("ℹ️ השעות הקיימות יעודכנו לאחר האישור.");
   }
-  lines.push(...preview.issues.map(issue=>`⚠ ${issue}`));
-  lines.push("אין שמירה חלקית. עובד או אירוע חסר לא ייווצרו אוטומטית. יש לתקן באפליקציה או לשלוח דיווח מתוקן.");
+  if(!valid){
+    if(event)lines.push(...preview.issues.map(issue=>`⚠️ ${issue}`));
+    lines.push("", "בדקו את הפרטים ושלחו דיווח מתוקן. לא נשמרו שעות.");
+  }
   return splitAttendanceMessage(lines.join("\n"));
+}
+function durationText(minutes:number){
+ const hours=Math.floor(minutes/60),remainder=minutes%60;
+ const h=hours===1?"שעה":`${hours} שעות`,m=remainder===1?"דקה":`${remainder} דקות`;
+ return hours&&remainder?`${h} ו־${m}`:hours?h:m;
 }
 export function parseAttendanceDecision(value: string): { inboxId: string; token: string; decision: "confirm"|"cancel" } | null {
   const uuid = "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})";
   const button = new RegExp(`^attendance:(confirm|cancel):${uuid}:${uuid}$`,"i").exec(value.trim());
   if (button) return { decision:button[1].toLowerCase() as "confirm"|"cancel",inboxId:button[2],token:button[3] };
-  const text = new RegExp(`^(אשר|בטל)\\s+${uuid}\\s+${uuid}$`,"i").exec(value.trim());
-  return text ? { decision:text[1]==="אשר"?"confirm":"cancel",inboxId:text[2],token:text[3] } : null;
+  return null;
 }

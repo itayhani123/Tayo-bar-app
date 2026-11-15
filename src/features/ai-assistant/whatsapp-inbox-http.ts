@@ -1,10 +1,10 @@
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { attendanceCorrectionSchema, attendanceExtractionSchema } from "./attendance";
-import { previewAttendance } from "./attendance-service";
+import { previewAttendance, previewWhatsAppAttendance, WHATSAPP_ATTENDANCE_POLICY } from "./attendance-service";
 import { normalizeIsraeliPhone } from "@/lib/whatsapp/phone";
 import { randomUUID } from "node:crypto";
-import { InboxConfigurationError, inboxFailure, logInboxFailure, type InboxDiagnostic, type InboxOperation } from "./whatsapp-inbox-errors";
+import { InboxConfigurationError, inboxFailure, logInboxFailure, receiptFailureContext, type InboxDiagnostic, type InboxOperation } from "./whatsapp-inbox-errors";
 
 const schema = z.discriminatedUnion("action",[
   z.object({ action:z.literal("configure"), phone:z.string().max(30), userId:z.uuid(), enabled:z.boolean(), autoSave:z.boolean() }).strict(),
@@ -15,7 +15,7 @@ const schema = z.discriminatedUnion("action",[
 type Dependencies = { createClient:()=>Promise<SupabaseClient>; admin:()=>SupabaseClient; preview?:typeof previewAttendance; missingServerConfiguration?: ("NEXT_PUBLIC_SUPABASE_URL"|"SUPABASE_SERVICE_ROLE_KEY")[]; log?:(diagnostic:InboxDiagnostic)=>void };
 export async function handleWhatsAppInbox(request:Request,deps:Dependencies) {
   const requestId=randomUUID();
-  const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{"Cache-Control":"no-store, private","X-Tayo-WhatsApp-Request-Id":requestId}});
+  const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{"Cache-Control":"no-store, private","X-Tayo-WhatsApp-Request-Id":requestId,"X-Tayo-WhatsApp-Policy":WHATSAPP_ATTENDANCE_POLICY,...(/^[a-f0-9]{40}$/i.test(process.env.VERCEL_GIT_COMMIT_SHA||"")?{"X-Tayo-WhatsApp-Commit":process.env.VERCEL_GIT_COMMIT_SHA!}:{})}});
   let operation:InboxOperation="authenticate";
   const signal=AbortSignal.any([request.signal,AbortSignal.timeout(50000)]);
   try {
@@ -41,12 +41,13 @@ export async function handleWhatsAppInbox(request:Request,deps:Dependencies) {
           admin.auth.admin.listUsers({page:1,perPage:1000}),
         ]);
         if(senders.error||profiles.error||users.error) throw senders.error??profiles.error??users.error;
-        return json({ senders:senders.data, users:profiles.data.filter(p=>users.data.users.some(u=>u.id===p.id)).map(p=>({id:p.id,role:p.role,label:users.data.users.find(u=>u.id===p.id)?.email || "משתמש ללא אימייל"})), autoEnabled:process.env.WHATSAPP_ATTENDANCE_AUTO_SAVE_ENABLED==="true" });
+        return json({ senders:senders.data, users:profiles.data.filter(p=>users.data.users.some(u=>u.id===p.id)).map(p=>({id:p.id,role:p.role,label:users.data.users.find(u=>u.id===p.id)?.email || "משתמש ללא אימייל"})), autoEnabled:false });
       }
       operation="read_reports";
       const history=new URL(request.url).searchParams.get("history")==="1";
-      const reports=await admin.from("whatsapp_attendance_inbox").select("id,phone,status,received_at,message_text,error_code,event_id").in("status",history?["approved","rejected"]:["pending","processing","review","failed"]).order("received_at",{ascending:false}).limit(100);
+      const reports=await admin.from("whatsapp_attendance_inbox").select("id,phone,status,received_at,message_text,error_code,event_id,approval_result,attempts,available_at").in("status",history?["approved","rejected"]:["pending","processing","review","failed"]).order("received_at",{ascending:false}).limit(100);
       if(reports.error) throw reports.error;
+      operation="read_receipts";
       const receipts=reports.data.length ? await admin.from("whatsapp_attendance_receipts").select("inbox_id,status,error_code,kind,created_at").in("inbox_id",reports.data.map(r=>r.id)).order("created_at",{ascending:false}) : {data:[],error:null};
       if(receipts.error) throw receipts.error;
       return json({reports:reports.data.map(r=>({...r,receipt:receipts.data?.find(v=>v.inbox_id===r.id&&v.kind==="result")??receipts.data?.find(v=>v.inbox_id===r.id)??null}))});
@@ -83,7 +84,7 @@ export async function handleWhatsAppInbox(request:Request,deps:Dependencies) {
     if(body.action==="preview") {
       if(q.status!=="review")return json({error:"הדיווח אינו ממתין לבדיקה"},409);
       operation="preview_report";
-      const preview=await(deps.preview??previewAttendance)(admin,actor,role,attendanceExtractionSchema.parse(q.extracted),body.correction,body.allowNew??false,signal);
+      const preview=await previewWhatsAppAttendance(admin,actor,role,attendanceExtractionSchema.parse(q.extracted),body.correction,signal,deps.preview,q.id);
       const updated=await admin.from("whatsapp_attendance_inbox").update({proposal_id:preview.proposalId??null,preview}).eq("id",q.id).eq("status","review").select("id").maybeSingle();
       if(updated.error)throw updated.error;
       if(!updated.data)return json({error:"הדיווח השתנה. יש לרענן"},409);
@@ -96,7 +97,7 @@ export async function handleWhatsAppInbox(request:Request,deps:Dependencies) {
     return json({saved:true});
   }catch(error){
     const failure=inboxFailure(error,signal.aborted);
-    (deps.log??logInboxFailure)({requestId,operation,code:failure.code,status:failure.status,...(failure.databaseCode?{databaseCode:failure.databaseCode}:{})});
+    (deps.log??logInboxFailure)({requestId,operation,code:failure.code,status:failure.status,...(failure.databaseCode?{databaseCode:failure.databaseCode}:{}),...(operation==="read_receipts"?receiptFailureContext(error):{})});
     return json({...failure,requestId},failure.status);
   }
 }

@@ -1,5 +1,13 @@
-export type InboxOperation = "authenticate" | "profile" | "server_configuration" | "read_senders" | "read_reports" | "configure_sender" | "confirm_report" | "read_report" | "preview_report" | "review_report" | "parse_request";
-export type InboxDiagnostic = { requestId: string; operation: InboxOperation; code: string; status: number; databaseCode?: string };
+export type InboxOperation = "authenticate" | "profile" | "server_configuration" | "read_senders" | "read_reports" | "read_receipts" | "configure_sender" | "confirm_report" | "read_report" | "preview_report" | "review_report" | "parse_request";
+export type InboxDiagnostic = { requestId: string; operation: InboxOperation; code: string; status: number; databaseCode?: string; databaseTable?: string; databaseColumns?: readonly string[]; missingColumn?: string };
+// Log only identifiers known by this query. Never log raw database messages.
+export function receiptFailureContext(error: unknown) {
+  const columns = ["inbox_id", "status", "error_code", "kind", "created_at"] as const;
+  const source = error && typeof error === "object" ? error as {code?:unknown;message?:unknown} : {};
+  const missingColumn = ["42703", "PGRST204"].includes(String(source.code)) && typeof source.message === "string"
+    ? columns.find(column => new RegExp(`(?:column\\s+(?:whatsapp_attendance_receipts\\.)?${column}\\s+does not exist|['\"]${column}['\"]\\s+column|column\\s+['\"]${column}['\"])`, "i").test(source.message as string)) : undefined;
+  return {databaseTable:"whatsapp_attendance_receipts", databaseColumns:columns, ...(missingColumn ? {missingColumn} : {})};
+}
 export class InboxConfigurationError extends Error {
   constructor(public readonly missing: readonly string[]) { super("WHATSAPP_SERVER_CONFIGURATION_MISSING"); }
 }

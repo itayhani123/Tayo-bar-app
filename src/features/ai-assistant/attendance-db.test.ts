@@ -3,7 +3,8 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { previewAttendance } from "./attendance-service";
+import { previewAttendance, previewWhatsAppAttendance, extractAttendance, WHATSAPP_ATTENDANCE_POLICY } from "./attendance-service";
+import {attendanceRangeEntries,AttendanceInputError} from "./attendance-input";
 import { attendanceTimes } from "./attendance";
 import { employees, extracted, attendanceExample } from "./attendance-fixture";
 import { attendanceSummary } from "@/lib/whatsapp/attendance-messages";
@@ -33,7 +34,7 @@ test("attendance real PostgreSQL: preview, atomic commit, updates, replay, autho
     await pg.query("insert into events(id,event_date,start_time,event_type,venue_id,client_name,guest_count,price_per_guest,package_type,payer_type) values($1,'2026-11-12','19:00','Wedding',$2,'לקוח',100,20,'Basic','client')", [event, venue]);
     await pg.exec("grant usage on schema public,auth to service_role; grant all on all tables in schema public to service_role; grant usage,select on all sequences in schema public to service_role; set role service_role");
     const db = { rpc(name: string, params: Record<string, unknown>) { return { abortSignal: async () => {
-      assert.ok(["ai_attendance_catalog", "ai_attendance_snapshot", "register_ai_attendance"].includes(name));
+      assert.ok(["ai_attendance_catalog", "ai_attendance_snapshot", "register_ai_attendance", "bind_whatsapp_attendance_proposal"].includes(name));
       const args = Object.values(params).map(v => typeof v === "object" && v !== null && !Array.isArray(v) ? JSON.stringify(v) : Array.isArray(v) && name === "register_ai_attendance" ? JSON.stringify(v) : v);
       const result = await pg.query<{ value: unknown }>(`select public.${name}(${Object.keys(params).map((key, i) => `${key}=>$${i + 1}`).join(",")}) value`, args);
       return { data: result.rows[0].value, error: null };
@@ -223,6 +224,239 @@ test("attendance real PostgreSQL: preview, atomic commit, updates, replay, autho
       const countBefore=await count("event_assignments"),decisionsBefore=await count("whatsapp_attendance_decisions");
       await pg.exec("reset role");await pg.exec(readFileSync("supabase/migrations/022_whatsapp_attendance_bot.sql","utf8"));
       assert.equal(await count("event_assignments"),countBefore);assert.equal(await count("whatsapp_attendance_decisions"),decisionsBefore);
+    });
+    await t.test("023 repairs the exact receipt listing query, preserves old messages and is idempotent",async()=>{
+      const query="select inbox_id,status,error_code,kind,created_at from whatsapp_attendance_receipts order by created_at desc";
+      await assert.rejects(pg.query(query),(error:unknown)=>Boolean(error&&typeof error==='object'&&'code' in error&&error.code==='42703'));
+      const before=await pg.query<{original:unknown}>("select to_jsonb(r) as original from whatsapp_attendance_receipts r order by id");
+      assert.ok(before.rows.length>0);
+      const migration=readFileSync("supabase/migrations/023_whatsapp_receipt_created_at.sql","utf8");
+      await pg.exec("reset role");await pg.exec(migration);await pg.exec(migration);
+      await pg.exec("set role service_role");
+      const result=await pg.query(query);assert.equal(result.rows.length,before.rows.length);
+      const after=await pg.query<{original:unknown;backfilled:boolean}>("select to_jsonb(r)-'created_at' as original,created_at=message_at as backfilled from whatsapp_attendance_receipts r order by id");
+      assert.deepEqual(after.rows.map(r=>r.original),before.rows.map(r=>r.original));
+      assert.ok(after.rows.every(r=>r.backfilled));
+      const inserted=await pg.query<{created_at:string}>("insert into whatsapp_attendance_receipts(inbox_id,phone,message_at,kind) select inbox_id,phone,message_at,'feedback' from whatsapp_attendance_receipts limit 1 returning created_at");
+      assert.ok(inserted.rows[0].created_at);
+    });
+    await t.test("024 explicitly confirms existing unassigned employees atomically with friendly messages and short codes",async()=>{
+      await pg.exec("reset role");
+      const migration=readFileSync("supabase/migrations/024_whatsapp_attendance_confirmation_ux.sql","utf8");
+      await pg.exec(migration);await pg.exec(migration);
+      await pg.exec("set role service_role");
+      const phone="972509999999",jon="55555555-5555-4555-8555-555555555555",testEvent="66666666-6666-4666-8666-666666666666";
+      await pg.query("insert into employees(id,full_name) values($1,'יונתן לולו')",[jon]);
+      await pg.query("insert into events(id,event_date,start_time,event_type,venue_id,client_name,guest_count,price_per_guest,package_type,payer_type) values($1,'2026-11-15','12:30','Wedding',$2,'מעיין',100,20,'Basic','client')",[testEvent,venue]);
+      await pg.query("select configure_whatsapp_attendance_sender($1,$2,$3,true,true)",[owner,phone,manager]);
+      let sequence=0;
+      const input={...extracted,day:15,month:11,year:2026,weekday:0,entries:[{name:"יונתן לולו",time:"12:30",direction:"in" as const,note:null},{name:"יונתן לולו",time:"17:35",direction:"out" as const,note:null}]};
+      const prepare=async(data=input)=>{
+        await pg.query("select receive_whatsapp_attendance($1,$2,'phone-id',$3,now())",[`ux-report-${++sequence}`,phone,attendanceExample]);
+        const job=(await pg.query<{value:{id:string;lease_token:string}}>("select claim_whatsapp_attendance(false) value")).rows[0].value;assert.ok(job);
+        const p=await previewAttendance(db,manager,"manager",data,undefined,true,signal);
+        await pg.query("select complete_whatsapp_attendance_analysis($1,$2,$3::jsonb,$4::jsonb,$5::jsonb)",[job.id,job.lease_token,JSON.stringify(data),JSON.stringify(p),JSON.stringify(attendanceSummary(p))]);
+        const q=(await pg.query<{id:string;confirmation_token:string;confirmation_code:string;proposal_id:string}>("select id,confirmation_token,confirmation_code,proposal_id from whatsapp_attendance_inbox where id=$1",[job.id])).rows[0];
+        const summary=(await pg.query<{message_payload:{parts:string[];buttons:{title:string}[]}}>("select message_payload from whatsapp_attendance_receipts where inbox_id=$1 and kind='summary'",[q.id])).rows[0].message_payload;
+        assert.doesNotMatch(summary.parts.join("\n"),/[0-9a-f]{8}-[0-9a-f]{4}-|token|UUID|אישור נפרד/);
+        return{...q,p,summary};
+      };
+      const receive=async(q:{confirmation_code:string},decision="confirm",command=`ux-command-${++sequence}`,sender=phone)=>(await pg.query<{ok:boolean}>("select receive_whatsapp_attendance_short_decision($1,$2,'phone-id',$3,$4,now()) ok",[command,sender,q.confirmation_code,decision])).rows[0].ok;
+      const execute=async()=>{
+        const d=(await pg.query<{value:{id:string;lease_token:string}}>("select claim_whatsapp_attendance_decision() value")).rows[0].value;assert.ok(d);
+        return(await pg.query<{value:{status:string;replayed?:boolean}}>("select execute_whatsapp_attendance_decision($1,$2) value",[d.id,d.lease_token])).rows[0].value;
+      };
+      const assignmentCount=async()=>Number((await pg.query<{n:number}>("select count(*)::int n from event_assignments where event_id=$1",[testEvent])).rows[0].n);
+      const first=await prepare();assert.equal(first.p.rows[0].operation,"create");assert.ok(first.p.proposalId);
+      assert.match(first.summary.parts.join("\n"),/יתווסף לשיבוץ האירוע בעת האישור/);assert.equal(first.summary.parts.length,1);
+      assert.equal(first.summary.buttons[0].title,"✅ אשר ושמור");assert.match(first.confirmation_code,/^[A-F0-9]{10}$/);
+      assert.equal(await assignmentCount(),0);
+      assert.equal((await pg.query<{value:{status:string}}>("select approve_whatsapp_attendance($1,$2,$3,true) value",[manager,first.id,first.proposal_id])).rows[0].value.status,"forbidden");
+      assert.equal(await receive(first,"confirm","ux-wrong-sender","972501234567"),false);
+      assert.equal(await receive(first,"confirm","ux-unique"),true);assert.equal(await receive(first,"confirm","ux-unique"),true);
+      assert.equal((await execute()).status,"succeeded");assert.equal(await assignmentCount(),1);
+      const saved=(await pg.query<{approval_result:{addedEmployeeNames:string[]}}>("select approval_result from whatsapp_attendance_inbox where id=$1",[first.id])).rows[0];
+      assert.deepEqual(saved.approval_result.addedEmployeeNames,["יונתן לולו"]);
+      const success=(await pg.query<{body:string}>("select body from whatsapp_attendance_receipts where inbox_id=$1 and kind='result'",[first.id])).rows[0].body;
+      assert.match(success,/עובד אחד עודכן/);assert.match(success,/12:30–17:35/);assert.match(success,/נוספו לשיבוץ האירוע/);assert.doesNotMatch(success,/[0-9a-f]{8}-[0-9a-f]{4}-|₪|hourly_rate/);
+      const audit=(await pg.query<{before_values:unknown;after_values:unknown}>("select before_values,after_values from ai_attendance_audit where import_id=$1",[first.proposal_id])).rows;
+      assert.equal(audit.length,1);assert.equal(audit[0].before_values,null);assert.ok(audit[0].after_values);
+      await receive(first);assert.equal((await execute()).replayed,true);assert.equal(await assignmentCount(),1);
+      const resubmitted=await prepare();await receive(resubmitted);assert.equal((await execute()).status,"succeeded");assert.equal(await assignmentCount(),1);
+      // Mixed assigned/unassigned employees. Failure in the last row rolls back
+      // both the existing employee's new hours and the first new assignment.
+      const mixed={...input,entries:[{...input.entries[0],time:"12:35"},input.entries[1],...employees.slice(0,2).flatMap(e=>[{name:e.full_name,time:"19:00",direction:"in" as const,note:null},{name:e.full_name,time:"02:10",direction:"out" as const,note:null}])]};
+      const rollback=await prepare(mixed);assert.ok(rollback.p.proposalId);assert.equal(rollback.p.rows.filter(r=>r.operation==="create").length,2);
+      await pg.exec("reset role;create function ux_fail_insert() returns trigger language plpgsql as $$begin if new.employee_id='"+employees[1].id+"' then raise exception 'test insert failure'; end if;return new;end$$;create trigger ux_fail_insert before insert on event_assignments for each row execute function ux_fail_insert();set role service_role");
+      await receive(rollback);assert.equal((await execute()).status,"failed");assert.equal(await assignmentCount(),1);
+      assert.equal((await pg.query<{n:number}>("select count(*)::int n from ai_attendance_audit where import_id=$1",[rollback.proposal_id])).rows[0].n,0);
+      assert.equal((await pg.query<{h:string}>("select to_char(work_start at time zone 'Asia/Jerusalem','HH24:MI') h from event_assignments where event_id=$1 and employee_id=$2",[testEvent,jon])).rows[0].h,"12:30");
+      await pg.exec("reset role;drop trigger ux_fail_insert on event_assignments;drop function ux_fail_insert();set role service_role");
+      const goodMixed=await prepare(mixed);await receive(goodMixed);assert.equal((await execute()).status,"succeeded");assert.equal(await assignmentCount(),3);
+      assert.equal(Number((await pg.query<{mins:string}>("select extract(epoch from(work_end-work_start))/60 as mins from event_assignments where event_id=$1 and employee_id=$2",[testEvent,employees[0].id])).rows[0].mins),430);
+      const unknown=await prepare({...input,entries:input.entries.map(r=>({...r,name:"יונתן לולוו"}))});assert.equal(unknown.p.proposalId,undefined);assert.equal(unknown.summary.buttons.length,1);
+      assert.match(unknown.summary.parts.join("\n"),/לא מצאתי במערכת עובד בשם/);
+      await receive(unknown);assert.equal((await execute()).status,"needs_correction");assert.equal(await assignmentCount(),3);
+      const missingEvent=await prepare({...input,venue:"אולם שלא קיים"});assert.equal(missingEvent.p.proposalId,undefined);assert.match(missingEvent.summary.parts.join("\n"),/אולם שלא קיים/);await receive(missingEvent);assert.equal((await execute()).status,"needs_correction");
+      const missingHours=await prepare({...input,entries:[input.entries[0]]});assert.equal(missingHours.p.proposalId,undefined);await receive(missingHours);assert.equal((await execute()).status,"needs_correction");
+      // Add another Roy then prepare again so the deterministic match is ambiguous.
+      await pg.query("insert into employees(id,full_name) values('77777777-7777-4777-8777-777777777777','רועי אחר')");
+      const unclear=await prepare({...input,entries:input.entries.map(r=>({...r,name:"רועי"}))});assert.equal(unclear.p.proposalId,undefined);assert.match(unclear.summary.parts.join("\n"),/מתאים לכמה עובדים/);
+      await receive(unclear);assert.equal((await execute()).status,"needs_correction");
+      await pg.query("insert into events(id,event_date,start_time,event_type,venue_id,client_name,guest_count,price_per_guest,package_type,payer_type) values('88888888-8888-4888-8888-888888888888','2026-11-15','12:30','Wedding',$1,'אירוע נוסף',100,20,'Basic','client')",[venue]);
+      const unclearEvent=await prepare();assert.equal(unclearEvent.p.eventId,null);assert.equal(unclearEvent.p.proposalId,undefined);assert.equal(unclearEvent.summary.buttons.length,1);await receive(unclearEvent);assert.equal((await execute()).status,"needs_correction");
+      const cancelled=await prepare();await receive(cancelled,"cancel");assert.equal((await execute()).status,"cancelled");
+      const expired=await prepare();await pg.query("update whatsapp_attendance_inbox set confirmation_expires_at=now()-interval '1 minute' where id=$1",[expired.id]);await receive(expired);assert.equal((await execute()).status,"expired");
+      const revoked=await prepare();await receive(revoked);await pg.query("update whatsapp_attendance_senders set enabled=false where phone=$1",[phone]);assert.equal((await execute()).status,"forbidden");
+      await pg.query("update whatsapp_attendance_senders set enabled=true where phone=$1",[phone]);
+      await pg.exec("update business_settings set numeric_value=1 where key='whatsapp_attendance_owner_approval_required'");
+      const ownerOnly=await prepare();assert.equal(ownerOnly.summary.buttons.length,1);await receive(ownerOnly);assert.equal((await execute()).status,"forbidden");
+      assert.equal(await assignmentCount(),3);
+      await pg.exec("reset role;set role authenticated");
+      await assert.rejects(pg.query("select receive_whatsapp_attendance_short_decision('forged','972509999999','phone-id','A123BC456D','confirm',now())"),/permission denied/);
+    });
+    await t.test("025 button-only server policy: real unassigned employee, delivery gate, atomic attendance, replay and legacy recovery",async()=>{
+      await pg.exec("reset role");
+      const before=await count("event_assignments");
+      const migration=readFileSync("supabase/migrations/025_whatsapp_attendance_buttons_only.sql","utf8");
+      await pg.exec(migration);await pg.exec(migration);assert.equal(await count("event_assignments"),before);
+      assert.equal((await pg.query<{n:number}>("select count(*)::int n from whatsapp_attendance_inbox where status='review' and preview->>'confirmationPolicy' is distinct from 'buttons_auto_assignment_v1'")).rows[0].n,0);
+      // Finish old fixture jobs; their recovery above must never write hours.
+      await pg.exec("update whatsapp_attendance_inbox set status='rejected' where status='pending';set role service_role");
+      await pg.exec("update business_settings set numeric_value=0 where key='whatsapp_attendance_owner_approval_required'");
+      const phone="972507777777",jon="55555555-5555-4555-8555-555555555555",v="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",e="99999999-9999-4999-8999-999999999999";
+      // Isolate this scenario from the earlier migration fixtures.
+      await pg.query("update event_assignments set work_start=null,work_end=null where employee_id=$1",[jon]);
+      await pg.query("insert into venues(id,name) values($1,'אפטאון')",[v]);
+      await pg.query("insert into events(id,event_date,start_time,event_type,venue_id,client_name,guest_count,price_per_guest,package_type,payer_type) values($1,'2026-11-15','12:30','Wedding',$2,'מעיין',100,20,'Basic','client')",[e,v]);
+      await pg.query("select configure_whatsapp_attendance_sender($1,$2,$3,true,false)",[owner,phone,manager]);
+      let seq=0;
+      const input={...extracted,venue:"אפטאון",day:15,month:11,year:2026,weekday:0,entries:[{name:"יונתן לולו",time:"12:30",direction:"in" as const,note:null},{name:"יונתן לולו",time:"17:35",direction:"out" as const,note:null}]};
+      const prepare=async(data=input,acknowledge=true)=>{
+        await pg.query("select receive_whatsapp_attendance($1,$2,'phone-id',$3,now())",[`buttons-report-${++seq}`,phone,attendanceExample]);
+        const job=(await pg.query<{value:{id:string;lease_token:string}}>("select claim_whatsapp_attendance(false) value")).rows[0].value;assert.ok(job);
+        const p=await previewWhatsAppAttendance(db,manager,"manager",data,undefined,signal);
+        assert.equal(p.confirmationPolicy,WHATSAPP_ATTENDANCE_POLICY);
+        p.confirmationPolicy="buttons_auto_assignment_v1"; // Historical 025 contract.
+        const old={...p,confirmationPolicy:undefined};
+        await assert.rejects(pg.query("select complete_whatsapp_attendance_analysis($1,$2,$3::jsonb,$4::jsonb,$5::jsonb)",[job.id,job.lease_token,JSON.stringify(data),JSON.stringify(old),JSON.stringify(attendanceSummary(p))]),/WHATSAPP_WORKER_VERSION_MISMATCH/);
+        await pg.query("select complete_whatsapp_attendance_analysis($1,$2,$3::jsonb,$4::jsonb,$5::jsonb)",[job.id,job.lease_token,JSON.stringify(data),JSON.stringify(p),JSON.stringify(attendanceSummary(p))]);
+        const q=(await pg.query<{id:string;confirmation_token:string;confirmation_code:string|null;proposal_id:string}>("select id,confirmation_token,confirmation_code,proposal_id from whatsapp_attendance_inbox where id=$1",[job.id])).rows[0];
+        const summary=(await pg.query<{message_payload:{parts:string[];buttons:{id:string;title:string}[]}}>("select message_payload from whatsapp_attendance_receipts where inbox_id=$1 and kind='summary' order by created_at desc limit 1",[q.id])).rows[0].message_payload;
+        assert.equal(q.confirmation_code,null);assert.doesNotMatch(summary.parts.join("\n"),/[0-9a-f]{8}-[0-9a-f]{4}-|לביטול:|בטל [A-F0-9]{10}|נדרש אישור נפרד|token/i);
+        if(acknowledge)await pg.query("update whatsapp_attendance_receipts set status='sent',provider_message_id=$2 where inbox_id=$1 and kind='summary'",[q.id,`meta-buttons-${seq}`]);
+        return {...q,p,summary};
+      };
+      const receive=async(q:{id:string;confirmation_token:string},decision="confirm")=>(await pg.query<{ok:boolean}>("select receive_whatsapp_attendance_decision($1,$2,'phone-id',$3,$4,$5,now()) ok",[`buttons-command-${++seq}`,phone,q.id,q.confirmation_token,decision])).rows[0].ok;
+      const execute=async()=>{
+        const d=(await pg.query<{value:{id:string;lease_token:string}}>("select claim_whatsapp_attendance_decision() value")).rows[0].value;assert.ok(d);
+        return(await pg.query<{value:{status:string;replayed?:boolean}}>("select execute_whatsapp_attendance_decision($1,$2) value",[d.id,d.lease_token])).rows[0].value;
+      };
+      const assignments=async()=>Number((await pg.query<{n:number}>("select count(*)::int n from event_assignments where event_id=$1",[e])).rows[0].n);
+      const unassigned=await prepare();assert.ok(unassigned.p.rows[0].needs_auto_assignment);assert.ok(unassigned.p.proposalId);
+      assert.deepEqual(unassigned.summary.buttons.map(b=>b.title),["✅ אשר ושמור","❌ בטל"]);
+      assert.match(unassigned.summary.parts.join("\n"),/אפטאון — מעיין/);assert.match(unassigned.summary.parts.join("\n"),/5 שעות ו־5 דקות/);
+      assert.equal(await assignments(),0);await receive(unassigned);assert.equal((await execute()).status,"succeeded");assert.equal(await assignments(),1);
+      const times=(await pg.query<{start:string;end:string}>("select to_char(work_start at time zone 'Asia/Jerusalem','HH24:MI') as start,to_char(work_end at time zone 'Asia/Jerusalem','HH24:MI') as end from event_assignments where event_id=$1",[e])).rows[0];
+      assert.deepEqual(times,{start:"12:30",end:"17:35"});
+      const auditBefore=await count("ai_attendance_audit");await receive(unassigned);assert.equal((await execute()).replayed,true);assert.equal(await count("ai_attendance_audit"),auditBefore);assert.equal(await assignments(),1);
+      const assigned=await prepare();assert.equal(assigned.p.rows[0].needs_auto_assignment,false);await receive(assigned);assert.equal((await execute()).status,"succeeded");assert.equal(await assignments(),1);
+      const changed=await prepare({...input,entries:input.entries.map(r=>({...r,time:r.direction==='in'?"12:45":r.time}))});assert.equal(changed.p.proposalId,undefined);assert.match(changed.summary.parts.join("\n"),/כבר שמורות/);await receive(changed);assert.equal((await execute()).status,"needs_correction");
+      const unknown=await prepare({...input,entries:input.entries.map(r=>({...r,name:"יונתן לולוו"}))});assert.equal(unknown.summary.buttons.length,1);await receive(unknown);assert.equal((await execute()).status,"needs_correction");
+      const noEvent=await prepare({...input,venue:"לא קיים"});assert.equal(noEvent.summary.buttons.length,1);await receive(noEvent);assert.equal((await execute()).status,"needs_correction");
+      const cancelled=await prepare();await receive(cancelled,"cancel");assert.equal((await execute()).status,"cancelled");assert.equal(await assignments(),1);
+      const unavailable=await prepare(input,false);await receive(unavailable);assert.equal((await execute()).status,"buttons_unavailable");assert.equal(await assignments(),1);
+      await pg.query("update whatsapp_attendance_receipts set status='failed',error_code='META_BUTTONS_NOT_ACCEPTED' where inbox_id=$1",[unavailable.id]);
+      assert.equal((await pg.query<{ok:boolean}>("select review_whatsapp_attendance($1,$2,'retryReceipt') ok",[manager,unavailable.id])).rows[0].ok,true);
+      assert.equal((await pg.query<{status:string}>("select status from whatsapp_attendance_inbox where id=$1",[unavailable.id])).rows[0].status,"pending");
+      await pg.query("update whatsapp_attendance_inbox set status='rejected' where id=$1",[unavailable.id]);
+      const newEmployee=await prepare({...input,entries:input.entries.map(r=>({...r,name:"מיכל"}))});assert.ok(newEmployee.p.rows[0].needs_auto_assignment);
+      await pg.exec("reset role;create function buttons_fail_insert() returns trigger language plpgsql as $$begin raise exception 'simulated attendance failure';end$$;create trigger buttons_fail_insert before insert on event_assignments for each row execute function buttons_fail_insert();set role service_role");
+      await receive(newEmployee);assert.equal((await execute()).status,"failed");assert.equal(await assignments(),1);
+      assert.equal((await pg.query<{n:number}>("select count(*)::int n from whatsapp_attendance_receipts where inbox_id=$1 and kind='result'",[newEmployee.id])).rows[0].n,0);
+      await pg.exec("reset role;drop trigger buttons_fail_insert on event_assignments;drop function buttons_fail_insert();set role service_role");
+      assert.equal((await pg.query<{ok:boolean}>("select receive_whatsapp_attendance_short_decision('disabled',$1,'phone-id','A123BC456D','confirm',now()) ok",[phone])).rows[0].ok,false);
+    });
+    await t.test("026 exact 19:46/19:50/19:59 incident: independent reports, delivery TTL, timely queued click, correction and duplicate safety",async()=>{
+      await pg.exec("reset role");const migration=readFileSync("supabase/migrations/026_whatsapp_attendance_reliability.sql","utf8");
+      const before=await count("event_assignments");await pg.exec(migration);await pg.exec(migration);assert.equal(await count("event_assignments"),before);
+      await pg.exec("set role service_role;update business_settings set numeric_value=0 where key='whatsapp_attendance_owner_approval_required'");
+      const phone="972506666666",jon="55555555-5555-4555-8555-555555555555",roy="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",v="cccccccc-cccc-4ccc-8ccc-cccccccccccc",e="dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+      await pg.query("update venues set name='אולם קודם' where id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'");
+      await pg.query("update event_assignments set work_start=null,work_end=null where employee_id=$1",[jon]);
+      await pg.query("insert into venues(id,name) values($1,'אפטאון')",[v]);
+      await pg.query("insert into employees(id,full_name) values($1,'רועי כהן')",[roy]);
+      await pg.query("insert into events(id,event_date,start_time,event_type,venue_id,client_name,guest_count,price_per_guest,package_type,payer_type) values($1,'2026-11-15','12:30','Wedding',$2,'מעיין',100,20,'Basic','client')",[e,v]);
+      await pg.query("select configure_whatsapp_attendance_sender($1,$2,$3,true,false)",[owner,phone,manager]);
+      const one="יום ראשון 15/11\nאפטאון\nיונתן לולו 12:30-17:35",two=one+"\nרועי כהן 11:30-17:3";
+      let aiCalls=0;
+      const client={responses:{create:async()=>{aiCalls++;return{status:"completed",output_text:JSON.stringify({venue:"אפטאון",day:15,month:11,year:null,weekday:0,entries:[]})};}}} as unknown as Parameters<typeof extractAttendance>[2];
+      const intake=async(id:string,text:string,at:string)=>await pg.query("select receive_whatsapp_attendance($1,$2,'phone-id',$3,$4)",[id,phone,text,at]);
+      const prepare=async()=>{
+        const job=(await pg.query<{value:{id:string;lease_token:string;message_text:string}}>("select claim_whatsapp_attendance(false) value")).rows[0].value;assert.ok(job);
+        const data=await extractAttendance(job.message_text,signal,client);
+        const p=await previewWhatsAppAttendance(db,manager,"manager",data,undefined,signal,undefined,job.id);
+        await pg.query("select complete_whatsapp_attendance_analysis($1,$2,$3::jsonb,$4::jsonb,$5::jsonb)",[job.id,job.lease_token,JSON.stringify(data),JSON.stringify(p),JSON.stringify(attendanceSummary(p))]);
+        const q=(await pg.query<{id:string;proposal_id:string;confirmation_token:string;confirmation_expires_at:Date|null}>("select id,proposal_id,confirmation_token,confirmation_expires_at from whatsapp_attendance_inbox where id=$1",[job.id])).rows[0];
+        const r=(await pg.query<{id:string;message_payload:{parts:string[];buttons:{title:string}[]}}>("select id,message_payload from whatsapp_attendance_receipts where inbox_id=$1 and kind='summary'",[q.id])).rows[0];
+        assert.equal(q.confirmation_expires_at,null);
+        await pg.query("update whatsapp_attendance_receipts set status='processing',lease_token=gen_random_uuid(),lease_until=now()+interval '2 minutes' where id=$1",[r.id]);
+        assert.equal((await pg.query<{ok:boolean}>("select ack_whatsapp_attendance_receipt(id,lease_token,$2,true,1) ok from whatsapp_attendance_receipts where id=$1",[r.id,`meta-${q.id}`])).rows[0].ok,true);
+        const ttl=(await pg.query<{seconds:string}>("select extract(epoch from(q.confirmation_expires_at-r.sent_at)) seconds from whatsapp_attendance_inbox q join whatsapp_attendance_receipts r on r.inbox_id=q.id where q.id=$1",[q.id])).rows[0].seconds;
+        assert.equal(Number(ttl),600);return{...q,r,p};
+      };
+      let seq=0;
+      const click=async(q:{id:string;confirmation_token:string},decision="confirm",id=`026-click-${++seq}`)=>(await pg.query<{ok:boolean}>("select receive_whatsapp_attendance_button($1,$2,'phone-id',$3,$4,$5,now(),$6) ok",[id,phone,q.id,q.confirmation_token,decision,`meta-${q.id}`])).rows[0].ok;
+      const execute=async()=>{
+        const d=(await pg.query<{value:{id:string;lease_token:string}}>("select claim_whatsapp_attendance_decision() value")).rows[0].value;assert.ok(d);
+        return(await pg.query<{value:{status:string;replayed?:boolean}}>("select execute_whatsapp_attendance_decision($1,$2) value",[d.id,d.lease_token])).rows[0].value;
+      };
+      await intake("today-1946",one,"2026-11-15T19:46:00+02:00");await intake("today-1946",one,"2026-11-15T19:46:00+02:00");
+      assert.equal((await pg.query<{n:number}>("select count(*)::int n from whatsapp_attendance_inbox where provider_message_id='today-1946'")).rows[0].n,1);
+      const first=await prepare();assert.equal(first.p.rows[0].needs_auto_assignment,true);assert.deepEqual(first.r.message_payload.buttons.map(b=>b.title),["אשר ושמור","ביטול"]);
+      // Advance the first report by four minutes without sleeping or trusting a
+      // browser clock. The new message must get a distinct pending proposal.
+      await pg.query("update whatsapp_attendance_inbox set confirmation_expires_at=confirmation_expires_at-interval '4 minutes',received_at=received_at-interval '4 minutes' where id=$1",[first.id]);
+      await pg.query("update ai_attendance_imports set expires_at=expires_at-interval '4 minutes' where id=$1",[first.proposal_id]);
+      await intake("today-1950",one,"2026-11-15T19:50:00+02:00");const second=await prepare();assert.notEqual(first.id,second.id);assert.notEqual(first.proposal_id,second.proposal_id);
+      assert.equal(await click({...second,confirmation_token:first.confirmation_token}),false);
+      await click(first,"cancel");assert.equal((await execute()).status,"cancelled");
+      assert.equal((await pg.query<{status:string}>("select status from whatsapp_attendance_inbox where id=$1",[second.id])).rows[0].status,"review");
+      assert.equal(await click(second,"confirm","026-timely"),true);assert.equal(await click(second,"confirm","026-timely"),true);
+      // Click at minute 4, process at minute 11: PostgreSQL intake time counts,
+      // while the immutable snapshot must still validate at the actual write.
+      await pg.query("update whatsapp_attendance_inbox set confirmation_expires_at=now()-interval '1 minute' where id=$1",[second.id]);
+      await pg.query("update whatsapp_attendance_decisions set received_at=now()-interval '7 minutes' where provider_message_id='026-timely'");
+      await pg.query("update ai_attendance_imports set expires_at=now()-interval '1 minute' where id=$1",[second.proposal_id]);
+      assert.equal((await execute()).status,"succeeded");
+      const audit=await count("ai_attendance_audit");await click(second);assert.equal((await execute()).replayed,true);assert.equal(await count("ai_attendance_audit"),audit);
+      const saved=(await pg.query<{mins:string}>("select extract(epoch from(work_end-work_start))/60 mins from event_assignments where event_id=$1 and employee_id=$2",[e,jon])).rows;
+      assert.equal(saved.length,1);assert.equal(Number(saved[0].mins),305);
+      await intake("today-1959",two,"2026-11-15T19:59:00+02:00");
+      const bad=(await pg.query<{value:{id:string;lease_token:string;message_text:string}}>("select claim_whatsapp_attendance(false) value")).rows[0].value;
+      const calls=aiCalls;let correction="";try{await extractAttendance(bad.message_text,signal,client);}catch(error){assert.ok(error instanceof AttendanceInputError);correction=error.message;}
+      assert.match(correction,/17:3/);assert.equal(aiCalls,calls);assert.throws(()=>attendanceRangeEntries(two),AttendanceInputError);
+      await pg.query("select request_whatsapp_attendance_correction($1,$2,$3)",[bad.id,bad.lease_token,correction]);
+      assert.equal((await pg.query<{n:number}>("select count(*)::int n from whatsapp_attendance_receipts where inbox_id=$1 and kind='correction'",[bad.id])).rows[0].n,1);
+      await pg.query("update whatsapp_attendance_receipts set status='failed' where inbox_id=$1 and kind='correction'",[bad.id]);
+      assert.equal((await pg.query<{ok:boolean}>("select review_whatsapp_attendance($1,$2,'retryReceipt') ok",[manager,bad.id])).rows[0].ok,true);
+      assert.equal((await pg.query<{n:number}>("select count(*)::int n from event_assignments where event_id=$1",[e])).rows[0].n,1);
+      await intake("today-1959-corrected",two.replace(/17:3$/,"17:30"),"2026-11-15T20:00:00+02:00");const multi=await prepare();assert.equal(multi.p.rows.length,2);await click(multi);assert.equal((await execute()).status,"succeeded");
+      assert.equal((await pg.query<{n:number}>("select count(*)::int n from event_assignments where event_id=$1",[e])).rows[0].n,2);
+      await intake("today-expired",one,"2026-11-15T20:10:00+02:00");const expired=await prepare();await pg.query("update whatsapp_attendance_inbox set confirmation_expires_at=now()-interval '1 second' where id=$1",[expired.id]);await click(expired);assert.equal((await execute()).status,"expired");
+      await intake("today-fast-reply",one,"2026-11-15T20:11:00+02:00");const fast=await prepare();
+      await pg.query("update whatsapp_attendance_receipts set status='processing',provider_message_id=null,lease_token=gen_random_uuid(),lease_until=now()+interval '2 minutes' where id=$1",[fast.r.id]);
+      await pg.query("update whatsapp_attendance_inbox set confirmation_expires_at=null where id=$1",[fast.id]);await click(fast);
+      assert.equal((await execute()).status,"awaiting_delivery");
+      await pg.query("select ack_whatsapp_attendance_receipt(id,lease_token,$2,true,1) from whatsapp_attendance_receipts where id=$1",[fast.r.id,`meta-${fast.id}`]);assert.equal((await execute()).status,"succeeded");
+      await intake("today-changed-after-replay",one,"2026-11-15T20:12:00+02:00");const replayChanged=await prepare();
+      await pg.query("update event_assignments set work_end=work_end+interval '1 minute' where event_id=$1 and employee_id=$2",[e,jon]);await click(replayChanged);assert.equal((await execute()).status,"stale");
+      await intake("old-retry",one,"2026-11-15T19:00:00+02:00");await intake("fresh-waiting",one,"2026-11-15T20:13:00+02:00");
+      await pg.query("update whatsapp_attendance_inbox set received_at=now()-interval '1 hour',attempts=3,available_at=now()-interval '1 second' where provider_message_id='old-retry'");
+      await pg.query("update whatsapp_attendance_inbox set received_at=now()-interval '1 minute',available_at=now()-interval '1 minute' where provider_message_id='fresh-waiting'");
+      assert.equal((await pg.query<{value:{provider_message_id:string}}>("select claim_whatsapp_attendance(false) value")).rows[0].value.provider_message_id,"fresh-waiting");
+      await pg.exec("reset role;set role authenticated");
+      await assert.rejects(pg.query("select ack_whatsapp_attendance_receipt('00000000-0000-0000-0000-000000000000','00000000-0000-0000-0000-000000000000','forged',true,1)"),/permission denied/);
     });
   } finally { await pg.close(); }
 });
