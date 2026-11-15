@@ -98,3 +98,68 @@ Before production release, sign in as an owner and manager and test the suggeste
 - `supabase/migrations/016_ai_assistant_actions.sql`: private proposals, action audit, coherent snapshots and atomic execution/idempotency.
 - `scripts/check-ai-layout.mjs`, `scripts/check-ai-openai.mjs`: repeatable browser and optional paid provider checks.
 - `docs/ai-assistant.md`: deployment, semantics, limits and delivery notes.
+
+## Production configuration diagnosis
+
+The old exact response `Tayo AI עדיין לא הוגדר בשרת. יש לפנות לבעלים` came from `handleAssistantRequest` when the route supplied `configured: Boolean(process.env.OPENAI_API_KEY)` as false. That check runs before quota consumption and before calling OpenAI. An invalid key, billing limit, model failure, database failure or WhatsApp setting did not produce that exact response. Missing/empty `OPENAI_API_KEY` in the running deployment is therefore the specific condition indicated by that response; whether the project setting is absent, assigned only to Preview/Development, or was added after the current deployment requires access to Vercel settings.
+
+In Vercel, open the **tayo-bar-app** project → **Settings → Environment Variables**. Define server-only `OPENAI_API_KEY`, select **Production**, save, then create a new production deployment. Updating `.env.local` or an existing project's settings alone does not update the environment of an already running deployment. Do not use `NEXT_PUBLIC_OPENAI_API_KEY`, `OPENAI_KEY`, or a different spelling. No alias or public-key fallback is implemented.
+
+Required exact names:
+
+| Variable | Purpose |
+| --- | --- |
+| `OPENAI_API_KEY` | OpenAI Responses API, chat and attendance extraction; server-only |
+| `NEXT_PUBLIC_SUPABASE_URL` | Existing Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Existing Supabase browser/session authentication key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only conversation persistence, proposals and confirmations |
+| `OPENAI_MODEL` | Optional model override; trimmed, defaults to `gpt-4.1-mini` |
+
+WhatsApp credentials are not prerequisites for ordinary AI questions. Its webhook/cron reuse attendance extraction but do not set or override OpenAI configuration. Restoring a stored conversation or confirming already prepared attendance does not require another OpenAI call; those operations still require the Supabase server configuration.
+
+Configuration now treats whitespace-only values as missing. The chat and attendance extractors use the same trimmed server key and model settings. Authenticated error responses contain a safe machine code: `AI_CONFIGURATION_MISSING` with exact missing variable names, `AI_PROVIDER_AUTH_FAILED`, `AI_PROVIDER_ACCESS_DENIED`, `AI_MODEL_UNAVAILABLE`, `AI_BILLING_LIMIT`, `AI_PROVIDER_RATE_LIMIT`, `AI_TIMEOUT`, `AI_CONNECTION_FAILED`, `AI_REQUEST_REJECTED` or `AI_PROVIDER_UNAVAILABLE`. A generic unknown failure remains `AI_REQUEST_FAILED`; it is never labeled as a missing key. Billing-limit errors do not suggest that retrying alone will fix them. The UI already displays the API's `error` text; it has no universal “not configured” fallback. Provider error bodies/messages and credentials are never returned or logged by this classification. Server logs contain only safe codes/status and allowlisted missing names.
+
+Safe local diagnostics:
+
+```
+node --env-file=.env.local scripts/check-ai-configuration.mjs --database
+node --env-file=.env.local --import ./scripts/test-register.mjs scripts/check-ai-openai.mjs
+```
+
+The first prints only variable presence, known alternative-name presence and schema availability (zero-row reads). The second sends synthetic text to OpenAI and never executes the returned tool call. Neither checks Vercel's runtime environment. In the diagnostic run, all four required local variables were present, no known alternative OpenAI variable names were present, and the live OpenAI function-call test completed. The connected Supabase exposed the AI tables and `begin_ai_turn`, `finish_ai_turn`, `release_ai_turn`, but did not expose `checkpoint_ai_turn` in API metadata: verify migration **018_ai_conversation_recovery.sql**, its service-role grants and PostgREST schema cache before testing conversation recovery. This is an additional database prerequisite, separate from the missing-key response.
+
+Direct Vercel environment names/scopes remain unverified. After the user explicitly authorized read-only access to local Vercel credentials, the safe metadata diagnostic found the linked project but no Vercel CLI login token or VERCEL_TOKEN. No Vercel environment value was read or modified, and no deployment was triggered. Authenticate locally with npx vercel login, then run node --env-file=.env.local scripts/check-ai-vercel-configuration.mjs to compare names and Production targets without decrypting or printing values. The script reads only the linked project metadata and an existing authorized login; its only remote request is GET with decrypt=false. Current project settings do not by themselves prove which settings an older running deployment received.
+
+References: [Vercel environment variable management](https://vercel.com/docs/environment-variables/managing-environment-variables), [OpenAI error codes](https://developers.openai.com/api/docs/guides/error-codes).
+
+## Browser submission and version diagnostics
+
+`AssistantChat` submits its form to `send()`, then React Query calls `POST /api/ai-assistant` with only the current user turn, conversation ID and request ID. Attendance lists take the existing `/api/ai-assistant/attendance` path. There is no browser-side OpenAI-key check. The historical “לא הוגדר בשרת” string originated in an API response, not a hard-coded client fallback. An old restore error could previously remain visible even while subsequent sending was blocked.
+
+Reproducible client faults fixed:
+
+- A missing `crypto.randomUUID` could throw **after** setting the submission lock and before invoking the mutation. The lock would remain set and no HTTP request would be created. UUIDs now use secure `getRandomValues` as a compatibility fallback; preparation occurs before locking, and failures are displayed without consuming the draft or disabling later retries.
+- The fetch callback used `AbortSignal.any` and `AbortSignal.timeout` before `fetch`. Browsers lacking these methods failed before HTTP. Chat and attendance requests now use `AbortController`, an ordinary timer and explicit cancellation instead.
+- Conversation restoration had no deadline. A hanging GET could keep the composer disabled indefinitely. Restore now times out after 12 seconds; busy polling is bounded at 90 seconds. Opening a new conversation cancels a pending restore and fences stale callbacks.
+- Messages of 2,001–12,000 characters were accepted by the textarea but silently rejected by normal-chat `send()`. They now receive a clear length error; attendance retains its separate 12,000-character limit. Buttons also reflect the existing busy-action guard.
+- Client error rendering checked `error.name === "Error"`, masking subclass errors. It now displays the safe error message. HTML/non-JSON responses, authentication redirects, HTTP failures, browser/network failures and timeouts have distinct safe codes. A new send clears stale restore errors.
+
+Expand **אבחון שליחה** in the chat to see the client protocol `chat-transport-v2`, safe Vercel Git revision (or `local`), request stage, HTTP status, safe error code and request ID. No prompt, personal data, credentials or raw provider errors appear in diagnostics. A missing server marker is reported as `unknown-or-older`; this is a compatibility observation, not proof of a particular production commit.
+
+The POST client sends `X-Tayo-AI-Request-Id`. At the authenticated API handler boundary, the server logs `Tayo AI HTTP received` with a validated/generated ID and protocol marker, before the existing authentication/configuration checks, and returns `X-Tayo-AI-Version` and the request ID on every handler-generated response. Authorization rules and WhatsApp connections are unchanged. Middleware can still reject unauthenticated traffic before that handler; a browser HTTP 401 should be investigated as a session failure rather than a missing OpenAI key.
+
+`public/sw.js` already excludes API responses and non-GET requests from caching; no service-worker change was needed. The current Git HEAD (`c888f7a` when inspected) still contains the old configuration error text, while the prior configuration fixes and this repair are local working-tree changes. The actual deployed Vercel revision remains unverified because the linked local project has no available Vercel login/access token. Do not infer that Production has a missing key solely because a stale UI shows the historical message.
+
+Validation:
+
+```
+npm test -- client-transport
+node scripts/check-ai-chat-transport.mjs
+npm test
+npm run typecheck
+npm run build
+```
+
+The browser check bundles the real React chat using the installed Next.js webpack and launches an isolated headless Chromium profile against a synthetic localhost HTTP server. It exercises real hydrated form submission, compatibility without modern AbortSignal methods/UUID API, pre-HTTP failures and retry, attendance routing, length errors, escaping a hanging restore, clearing a stale restore error, and displaying an actual HTTP 503 from an older API. It asserts exactly one POST after successful submission and no uncaught browser exceptions. Only the test fixture's link component and HTTP backend are mocked; no production authentication bypass, real OpenAI call, WhatsApp message or business-data write is involved.
+
+All seven hydrated-browser scenarios passed. TypeScript, production build and scoped ESLint passed. The full Node test suite reported 189/191 passing, with only the same two pre-existing WhatsApp template failures. These checks establish the local request path and regression fixes; they do not establish which pre-HTTP fault, if any, occurs on the user's production browser. Deploy the repaired source and compare the visible transport/build marker and correlated request ID before attributing a production failure to a missing key.

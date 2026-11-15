@@ -5,9 +5,16 @@ import { ConversationError, turnSchema, type UserTurn } from "./conversations";
 import type { ConversationReply } from "./conversation-types";
 
 import { chatSchema } from "@/features/ai-assistant/policy";
-const json = (body: unknown, status = 200, extra: Record<string, string> = {}) => Response.json(body, { status, headers: { "Cache-Control": "no-store, private", ...extra } });
+import { AiConfigurationError, type AiEnvironmentName } from "./configuration";
+import { aiFailure, reportAiFailure } from "./errors";
+import { AI_TRANSPORT_VERSION } from "./transport-version";
+const createJson = (body: unknown, status = 200, extra: Record<string, string> = {}) => Response.json(body, { status, headers: { "Cache-Control": "no-store, private", ...extra } });
 
-export async function handleAssistantRequest(request: Request, deps: { createClient: () => Promise<SupabaseClient>; answer: (db: SupabaseClient, role: string, messages: { role: "user" | "assistant"; content: string }[], signal: AbortSignal, actorId: string, requestId: string) => Promise<string | ChatResult>; converse?: (db: SupabaseClient, role: string, actorId: string, turn: UserTurn, signal: AbortSignal) => Promise<ConversationReply>; configured: boolean }) {
+export async function handleAssistantRequest(request: Request, deps: { createClient: () => Promise<SupabaseClient>; answer: (db: SupabaseClient, role: string, messages: { role: "user" | "assistant"; content: string }[], signal: AbortSignal, actorId: string, requestId: string) => Promise<string | ChatResult>; converse?: (db: SupabaseClient, role: string, actorId: string, turn: UserTurn, signal: AbortSignal) => Promise<ConversationReply>; configured: boolean; missingConfiguration?: AiEnvironmentName[] }) {
+  const suppliedId = request.headers.get("X-Tayo-AI-Request-Id") ?? "";
+  const requestId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(suppliedId) ? suppliedId : randomUUID();
+  const json = (body: unknown, status = 200, extra: Record<string, string> = {}) => createJson(body, status, { "X-Tayo-AI-Version": AI_TRANSPORT_VERSION, "X-Tayo-AI-Request-Id": requestId, ...extra });
+  console.info("Tayo AI HTTP received", { method: "POST", requestId, version: AI_TRANSPORT_VERSION });
   if (request.headers.get("origin") !== new URL(request.url).origin) return json({ error: "מקור הבקשה אינו מורשה" }, 403);
   const deadline = AbortSignal.any([request.signal, AbortSignal.timeout(50000)]);
   try {
@@ -43,7 +50,9 @@ export async function handleAssistantRequest(request: Request, deps: { createCli
     const turn = turnSchema.safeParse(body);
     const parsed = chatSchema.safeParse(body);
     if (!parsed.success && !turn.success) return json({ error: "השיחה ארוכה מדי או שהשאלה אינה תקינה" }, 400);
-    if (!deps.configured) return json({ error: "Tayo AI עדיין לא הוגדר בשרת. יש לפנות לבעלים" }, 503);
+    const missing = (deps.missingConfiguration ?? []).filter(name => name !== "SUPABASE_SERVICE_ROLE_KEY" || (turn.success && deps.converse));
+    if (!deps.configured && !missing.includes("OPENAI_API_KEY")) missing.push("OPENAI_API_KEY");
+    if (missing.length) throw new AiConfigurationError(missing);
     const quota = await db.rpc("consume_ai_assistant_usage").abortSignal(deadline);
     if (quota.error) return json({ error: "בקרת השימוש אינה זמינה. יש לפנות לבעלים" }, 503);
     if (quota.data !== true) return json({ error: "הגעת למכסת השימוש. נסו שוב מאוחר יותר" }, 429, { "Retry-After": "60" });
@@ -53,8 +62,8 @@ export async function handleAssistantRequest(request: Request, deps: { createCli
     return json(typeof answer === "string" ? { answer, proposals: [] } : answer);
   } catch (error) {
     if (error instanceof ConversationError) return json({ error: error.message }, error.status);
-    // Never log chat text, database rows, SDK errors, API keys or credentials.
-    if (typeof error === "object" && error !== null && "status" in error && error.status === 429) return json({ error: "שירות ה־AI הגיע למגבלת שימוש. נסו מאוחר יותר; אם הבעיה נמשכת, יש לבדוק מכסה וחיוב בחשבון OpenAI" }, 503, { "Retry-After": "60" });
-    return json({ error: deadline.aborted ? "הבקשה ארכה יותר מדי זמן. נסו שאלה ממוקדת יותר" : "לא ניתן לקבל תשובה כרגע. נסו שוב מאוחר יותר" }, deadline.aborted ? 504 : 502);
+    const failure = aiFailure(error, deadline.aborted);
+    if (failure) { reportAiFailure(failure); return json({ error: failure.error, code: failure.code, ...(failure.missing ? { missing: failure.missing } : {}) }, failure.status, failure.retryAfter ? { "Retry-After": failure.retryAfter } : {}); }
+    return json({ error: "לא ניתן לקבל תשובה כרגע. נסו שוב מאוחר יותר", code: "AI_REQUEST_FAILED" }, 502);
   }
 }

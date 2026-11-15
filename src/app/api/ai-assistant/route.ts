@@ -4,12 +4,15 @@ import { answerQuestion } from "@/features/ai-assistant/service";
 import { handleAssistantRequest } from "@/features/ai-assistant/http";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ConversationError, loadConversation, runConversation } from "@/features/ai-assistant/conversations";
+import { AiConfigurationError, missingAiEnvironment } from "@/features/ai-assistant/configuration";
+import { aiFailure, reportAiFailure } from "@/features/ai-assistant/errors";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
-  return handleAssistantRequest(request, { createClient, configured: Boolean(process.env.OPENAI_API_KEY),
+  const missingConfiguration = missingAiEnvironment();
+  return handleAssistantRequest(request, { createClient, configured: !missingConfiguration.includes("OPENAI_API_KEY"), missingConfiguration,
     // Legacy callers remain read-only; client-provided assistant history cannot create proposals.
     answer: (db, role, messages, signal) => answerQuestion(db, role, messages, signal),
     converse: (db, role, actorId, turn, signal) => runConversation(db, createAdminClient(), role, actorId, turn, signal),
@@ -26,6 +29,13 @@ export async function GET(request: Request) {
     if (!profile.data || !["owner", "manager"].includes(profile.data.role)) return json({ error: "אין הרשאה" }, 403);
     const id = new URL(request.url).searchParams.get("conversationId");
     if (!id) return json({ error: "חסר מזהה שיחה" }, 400);
+    const missing = missingAiEnvironment().filter(name => name !== "OPENAI_API_KEY");
+    if (missing.length) throw new AiConfigurationError(missing);
     return json(await loadConversation(createAdminClient(), auth.user.id, profile.data.role, id));
-  } catch (error) { return json({ error: error instanceof ConversationError ? error.message : "לא ניתן לטעון את השיחה" }, error instanceof ConversationError ? error.status : 400); }
+  } catch (error) {
+    if (error instanceof ConversationError) return json({ error: error.message }, error.status);
+    const failure = aiFailure(error);
+    if (failure) { reportAiFailure(failure); return json({ error: failure.error, code: failure.code, missing: failure.missing }, failure.status); }
+    return json({ error: "לא ניתן לטעון את השיחה" }, 400);
+  }
 }

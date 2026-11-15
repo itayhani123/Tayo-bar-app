@@ -3,7 +3,10 @@
 import { createClient } from "@supabase/supabase-js";
 const names = ["OPENAI_API_KEY", "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
 console.log(JSON.stringify({ environment: Object.fromEntries(names.map(name => [name, Boolean(process.env[name]?.trim())])) }));
+console.log(JSON.stringify({ scope: ["production", "preview", "development"].includes(process.env.VERCEL_ENV) ? process.env.VERCEL_ENV : "local", modelOverridePresent: Boolean(process.env.OPENAI_MODEL?.trim()), alternativeOpenAINamesPresent: ["OPENAI_KEY", "OPENAI_TOKEN", "OPEN_AI_API_KEY", "NEXT_PUBLIC_OPENAI_API_KEY"].filter(name => Boolean(process.env[name]?.trim())) }));
+if (names.some(name => !process.env[name]?.trim())) process.exitCode = 1;
 if (process.argv.includes("--database")) {
+  try {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) { console.log(JSON.stringify({ database: "not_checked_missing_server_configuration" })); process.exitCode = 1; }
@@ -26,4 +29,5 @@ if (process.argv.includes("--database")) {
       }
     } else console.log(JSON.stringify({ rpcMetadata: "not_verified", status: metadata.status }));
   }
+  } catch { console.log(JSON.stringify({ database: "not_verified", code: "DATABASE_DIAGNOSTIC_FAILED" })); process.exitCode = 1; }
 }

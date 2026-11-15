@@ -4,12 +4,10 @@ import Link from "next/link.js";
 import { useQueryClient } from "@tanstack/react-query";
 import type { AttendancePreview, AttendanceRow } from "./attendance";
 import { formatDuration } from "@/features/event-staffing/calculations";
+import { requestAiJson } from "./client-transport";
 
 export async function attendanceRequest(body: unknown) {
-  const response = await fetch("/api/ai-assistant/attendance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(55000), cache: "no-store", redirect: "error" });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || data.message || "הפעולה לא הושלמה");
-  return data;
+  return requestAiJson<Record<string, unknown>>("/api/ai-assistant/attendance", { body });
 }
 const previous = (v: string | null) => v ? new Intl.DateTimeFormat("he-IL", { timeZone: "Asia/Jerusalem", dateStyle: "short", timeStyle: "short" }).format(new Date(v)) : "—";
 export function AttendanceCard({ initial, onBusyChange, request = attendanceRequest, onSaved }: { initial: AttendancePreview; onBusyChange: (busy: boolean) => void; request?: typeof attendanceRequest; onSaved?: () => void }) {
@@ -31,7 +29,8 @@ export function AttendanceCard({ initial, onBusyChange, request = attendanceRequ
       if (confirm) {
         if (dirty || !preview.proposalId) return;
         const saved = await request({ action: "confirm", proposalId: preview.proposalId, confirmed: true });
-        setResult(saved);
+        if (saved.status !== "succeeded" || typeof saved.message !== "string") throw new Error("השרת לא החזיר אישור שמירה תקין. ניתן לנסות שוב את אותו אישור בבטחה");
+        setResult({ message: saved.message, ...(typeof saved.eventId === "string" ? { eventId: saved.eventId } : {}) });
         onSaved?.();
         await Promise.all(["events", "event-assignments", "calendar-staffing", "calendar-finance-statuses", "dashboard", "payroll", "receivables", "income-events"].map(key => cache.invalidateQueries({ queryKey: [key] })));
       } else {
