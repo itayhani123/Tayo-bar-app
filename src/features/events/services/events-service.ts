@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import type { EventFormValues, EventRecord, VenueOption } from "../types";
 import { buildEventPayload as toPayload } from "../mutation-payload";
+import {readInventoryCosts} from "@/features/inventory/costs";
 
 type EventDatabaseRow = {
   id: string;
@@ -75,9 +76,8 @@ export async function listEvents(includeFinancials = true): Promise<EventRecord[
   throw error;
 }
 
-    return (data as unknown as EventDatabaseRow[]).map((event) =>
-      toRecord(event, names.get(event.venue_id) ?? "Unknown venue")
-    );
+    const costs=includeFinancials?await readInventoryCosts(createClient(),(data as unknown as EventDatabaseRow[]).map(e=>e.id)):new Map<string,string>();
+    return (data as unknown as EventDatabaseRow[]).map(event=>({...toRecord(event,names.get(event.venue_id)??"Unknown venue"),actualAlcoholCostAgorot:costs.get(event.id)}));
   } catch (e) {
     console.error("LIST EVENTS FAILED:", e);
     throw e;

@@ -5,6 +5,7 @@ import type { AppRole } from "@/lib/auth/user";
 import { AttendanceCard } from "./attendance-card";
 import type { AttendancePreview, AttendanceCorrection } from "./attendance";
 import {attendanceFailureMessage} from "@/lib/whatsapp/attendance-failures";
+import Link from "next/link";
 
 async function api(body?:unknown,query="") {
  const response=await fetch(`/api/whatsapp/attendance${query}`,{method:body?"POST":"GET",headers:body?{"Content-Type":"application/json"}:undefined,body:body?JSON.stringify(body):undefined,cache:"no-store",signal:AbortSignal.timeout(55000)});
@@ -40,6 +41,7 @@ export function WhatsAppAttendanceInbox({role}:{role:AppRole}) {
  return <section dir="rtl" className="mx-auto mt-6 w-full max-w-4xl space-y-4 rounded-2xl border bg-white p-4" aria-label="דיווחי נוכחות מוואטסאפ">
   <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-lg font-semibold">דיווחי נוכחות מ־WhatsApp</h2><label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={history} onChange={e=>setHistory(e.target.checked)} />הצגת דיווחים שנשמרו או נדחו</label></div>
   <p className="text-sm text-slate-600">דיווחים ממספרים מורשים נשמרים לבדיקה. שעות העבודה מתעדכנות רק לאחר אישור.</p>
+  <p className="text-sm"><Link className="underline" href="/inventory">דיווחי צריכת אלכוהול וקליטת מלאי מ־WhatsApp מוצגים במסך המלאי</Link></p>
   {(error||reports.error) && <p role="alert" className="text-sm text-red-700">{error||(reports.error instanceof Error?reports.error.message:"לא ניתן לטעון דיווחים")}</p>}
   {notice&&<p role="status" className="text-sm text-emerald-800">{notice}</p>}
   {reports.isLoading&&<p role="status">טוען דיווחים…</p>}

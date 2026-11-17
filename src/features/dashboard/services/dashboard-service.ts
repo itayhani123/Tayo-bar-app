@@ -4,6 +4,7 @@ import type { PaymentStatus } from "@/features/events/types";
 import { payrollMonthSchema } from "@/features/payroll/validation";
 import type { DashboardAssignment, DashboardData, DashboardEvent } from "../types";
 import { getDashboardActualDateRange, getIsraelDateOnly } from "../utils/dashboard-date-range";
+import {readInventoryCosts,effectiveAlcoholCost} from "@/features/inventory/costs";
 
 type EventRow = { id: string; event_date: string; start_time: string; venue_id: string | null; event_type: string; client_name: string; guest_count: number; price_per_guest: number | string; vat_rate: number | string; price_includes_vat: boolean; estimated_alcohol_cost: number | string; payment_status: PaymentStatus; security_check_received: boolean; invoice_issued: boolean; created_at: string; updated_at: string };
 type AssignmentRow = { id: string; event_id: string; employee_id: string; event_role: EventRole; pay_type: PayType; hourly_rate: number | string | null; fixed_pay: number | string | null; work_start: string | null; work_end: string | null };
@@ -31,6 +32,9 @@ export async function getDashboardData(month: string, includePayments = true): P
   for (const result of [monthlyResult, operationalResult, recentResult, venuesResult, employeesResult]) if (result.error) throw result.error;
   const rows = uniqueEvents([...(monthlyResult.data as unknown as EventRow[]), ...(operationalResult.data as unknown as EventRow[]), ...(recentResult.data as unknown as EventRow[])]);
   const eventIds = rows.map((event) => event.id);
+  const inventoryCosts=includePayments?await readInventoryCosts(supabase,eventIds):new Map<string,string>();
+  // Actual approved consumption replaces the estimate; never add both.
+  if(includePayments)for(const row of rows)row.estimated_alcohol_cost=effectiveAlcoholCost(Number(row.estimated_alcohol_cost),inventoryCosts.get(row.id));
   const [assignmentResult, paymentResult] = await Promise.all([
     eventIds.length ? supabase.from("event_assignments").select(includePayments ? "id, event_id, employee_id, event_role, pay_type, hourly_rate, fixed_pay, work_start, work_end" : "id, event_id, employee_id, event_role, work_start, work_end").in("event_id", eventIds) : Promise.resolve({ data: [], error: null }),
     includePayments && eventIds.length ? supabase.from("event_payments").select("event_id, amount").in("event_id", eventIds) : Promise.resolve({ data: [], error: null }),

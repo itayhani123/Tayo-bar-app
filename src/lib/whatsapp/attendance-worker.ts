@@ -4,8 +4,10 @@ import { AttendanceDeliveryError } from "./attendance-delivery";
 import {AttendanceInputError} from "@/features/ai-assistant/attendance-input";
 import { attendanceSummary, splitAttendanceMessage, type AttendanceReplyButton } from "./attendance-messages";
 import {classifyAttendanceFailure,type AttendanceProcessingStage} from "./attendance-failures";
+import {processInventoryReport} from "@/features/inventory/whatsapp";
+import {INVENTORY_POLICY} from "@/features/inventory/domain";
 
-export type InboxJob = { id: string; provider_message_id?:string; actor_id: string; phone: string; message_text: string; message_at: string; lease_token: string; attempts: number };
+export type InboxJob = { id: string; report_type?:string;provider_message_id?:string; actor_id: string; phone: string; message_text: string; message_at: string; lease_token: string; attempts: number };
 type ReceiptJob = { id: string; inbox_id: string; phone: string; message_at: string; lease_token: string; attempts: number; kind?: string; body?: string; part_index?: number; message_payload?: {policy?:string;parts?:string[];buttons?:AttendanceReplyButton[]} };
 export const receiptText = "דיווח הנוכחות שלך אושר, וכל שעות העבודה נשמרו באירוע בהצלחה. ניתן לראות את הפרטים באפליקציית Tayo Bar.";
 export async function processAttendanceInbox(db: SupabaseClient, signal: AbortSignal, deps: { extract?: typeof extractAttendance; preview?: typeof previewAttendance } = {}) {
@@ -24,6 +26,7 @@ export async function processAttendanceInbox(db: SupabaseClient, signal: AbortSi
       await db.from("whatsapp_attendance_inbox").update({ status: "rejected", error_code: "SENDER_REVOKED", lease_until: null }).eq("id",job.id).eq("lease_token",job.lease_token); return 1;
     }
     stage="extraction";
+    if(job.report_type==="inventory"){await processInventoryReport(db,job,signal);return 1;}
     const extracted = await (deps.extract ?? extractAttendance)(job.message_text,signal);
     // This only prepares existing employees for assignment. The signed, actor-bound
     // WhatsApp confirmation is still mandatory before the atomic write.
@@ -63,11 +66,12 @@ export async function processAttendanceReceipt(db: SupabaseClient, send: (phone:
   if (claimed.error) throw new Error("RECEIPT_CLAIM_FAILED");
   const job = claimed.data as ReceiptJob | null; if (!job) return 0;
   try {
-    if(job.kind==="summary"&&job.message_payload?.policy!==WHATSAPP_ATTENDANCE_POLICY)throw new AttendanceDeliveryError("SUMMARY_POLICY_OUTDATED",false);
+    if(job.kind==="summary"&&![WHATSAPP_ATTENDANCE_POLICY,INVENTORY_POLICY].includes(job.message_payload?.policy||""))throw new AttendanceDeliveryError("SUMMARY_POLICY_OUTDATED",false);
     if(job.kind==="summary"&&!job.message_payload?.buttons?.length)throw new AttendanceDeliveryError("INTERACTIVE_REQUIRED",false);
     if(job.kind){
-      const report=await db.from("whatsapp_attendance_inbox").select("actor_id,status").eq("id",job.inbox_id).single();
+      const report=await db.from("whatsapp_attendance_inbox").select("actor_id,status,report_type").eq("id",job.inbox_id).single();
       if(report.error)throw report.error;
+      if(job.kind==="summary"&&((report.data.report_type==="inventory")!==(job.message_payload?.policy===INVENTORY_POLICY)))throw new AttendanceDeliveryError("SUMMARY_POLICY_OUTDATED",false);
       const sender=await db.from("whatsapp_attendance_senders").select("user_id,enabled").eq("phone",job.phone).single();
       const profile=await db.from("profiles").select("role").eq("id",report.data.actor_id).single();
       if(sender.error||profile.error)throw new Error("DELIVERY_AUTH_UNAVAILABLE");

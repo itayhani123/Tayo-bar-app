@@ -34,6 +34,7 @@ export type EventFormValues = {
 
 export type EventRecord = EventFormValues & {
   id: string;
+  actualAlcoholCostAgorot?: string;
   venueName: string;
   createdAt: string;
   updatedAt: string;

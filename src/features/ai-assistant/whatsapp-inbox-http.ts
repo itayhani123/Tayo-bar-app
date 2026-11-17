@@ -45,7 +45,7 @@ export async function handleWhatsAppInbox(request:Request,deps:Dependencies) {
       }
       operation="read_reports";
       const history=new URL(request.url).searchParams.get("history")==="1";
-      const reports=await admin.from("whatsapp_attendance_inbox").select("id,phone,status,received_at,message_text,error_code,event_id,approval_result,attempts,available_at").in("status",history?["approved","rejected"]:["pending","processing","review","failed"]).order("received_at",{ascending:false}).limit(100);
+      const reports=await admin.from("whatsapp_attendance_inbox").select("id,phone,status,received_at,message_text,error_code,event_id,approval_result,attempts,available_at").eq("report_type","attendance").in("status",history?["approved","rejected"]:["pending","processing","review","failed"]).order("received_at",{ascending:false}).limit(100);
       if(reports.error) throw reports.error;
       operation="read_receipts";
       const receipts=reports.data.length ? await admin.from("whatsapp_attendance_receipts").select("inbox_id,status,error_code,kind,created_at").in("inbox_id",reports.data.map(r=>r.id)).order("created_at",{ascending:false}) : {data:[],error:null};

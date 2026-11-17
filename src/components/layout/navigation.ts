@@ -9,6 +9,7 @@ export const navigationItems: NavigationItem[] = [
   { href: "/leads", label: "לידים / CRM", icon: "income", roles: both },
   { href: "/employees", label: "עובדים", icon: "employees", roles: both },
   { href: "/timesheets", label: "שעות עבודה", icon: "timesheets", roles: both },
+  { href: "/inventory", label: "מלאי אלכוהול", icon: "events", roles: both },
   { href: "/payroll", label: "משכורות", icon: "payroll", roles: owner },
   { href: "/income", label: "הכנסות", icon: "income", roles: owner },
   { href: "/receivables", label: "יתרות לגבייה", icon: "income", roles: owner },

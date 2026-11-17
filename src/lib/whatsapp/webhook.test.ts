@@ -20,6 +20,17 @@ test("Meta webhook authenticates exact raw bytes, fails closed, scopes phone, pr
  const tampered=new Request("https://tayo.test/api/webhooks/whatsapp",{method:"POST",headers:{"x-hub-signature-256":"sha256="+createHmac("sha256",secret).update(raw).digest("hex")},body:raw+" "});
  assert.equal((await handleMetaWebhook(tampered,()=>db,{secret,phoneId:"phone-id"})).status,401);
 });
+
+test("inventory and attendance share the signed webhook, intake queues and real interactive decision handler",async()=>{
+ const secret="inventory-test-secret",calls:string[]=[],id="11111111-1111-4111-8111-111111111111",token="22222222-2222-4222-8222-222222222222";
+ const db={rpc:async(name:string)=>{calls.push(name);return{data:true,error:null};}} as unknown as SupabaseClient;
+ const base={from:"972501234567",timestamp:String(Math.floor(Date.now()/1000))};
+ const messages=[{...base,id:"inventory-text",type:"text",text:{body:"צריכת אלכוהול\nאפטאון 15/11\n4 גרייגוס"}},{...base,id:"receipt",type:"text",text:{body:"התקבלו למלאי 12 גרייגוס"}},{...base,id:"attendance",type:"text",text:{body:"הגעה\nנדב 19:00"}},{...base,id:"inventory-button",type:"interactive",interactive:{type:"button_reply",button_reply:{id:`inventory:confirm:${id}:${token}`}}}];
+ const raw=JSON.stringify({object:"whatsapp_business_account",entry:[{changes:[{value:{metadata:{phone_number_id:"phone"},messages}}]}]});
+ const req=new Request("https://tayo.test/api/webhooks/whatsapp",{method:"POST",headers:{"x-hub-signature-256":"sha256="+createHmac("sha256",secret).update(raw).digest("hex")},body:raw});
+ assert.equal((await handleMetaWebhook(req,()=>db,{secret,phoneId:"phone"})).status,200);
+ assert.deepEqual(calls,["receive_inventory_whatsapp","receive_inventory_whatsapp","receive_whatsapp_attendance","receive_whatsapp_attendance_button"]);
+});
 test("same signed webhook accepts only interactive decisions, never text commands or button payload pasted as text",async()=>{
  const report="11111111-1111-4111-8111-111111111111",token="22222222-2222-4222-8222-222222222222",secret="synthetic-signature";
  const calls:{name:string;args:Record<string,unknown>}[]=[];

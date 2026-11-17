@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { parseAttendanceDecision } from "./attendance-messages";
+import {isInventoryMessage,parseInventoryButton} from "@/features/inventory/domain";
 
 export function validMetaSignature(raw: Uint8Array, signature: string | null, secret: string | undefined) {
   if (!secret || !signature || !/^sha256=[a-f0-9]{64}$/i.test(signature)) return false;
@@ -41,7 +42,7 @@ export async function handleMetaWebhook(request: Request, db: () => SupabaseClie
         const parsed = messageSchema.safeParse(rawMessage); if (!parsed.success) continue;
         const message = parsed.data;
         const at = new Date(Number(message.timestamp)*1000); if (!Number.isFinite(+at) || +at>Date.now()+300000) continue;
-        const decision=message.type==="interactive"?parseAttendanceDecision(message.interactive.button_reply.id):null;
+        const decision=message.type==="interactive"?(parseInventoryButton(message.interactive.button_reply.id)??parseAttendanceDecision(message.interactive.button_reply.id)):null;
         if(decision){
           const stored=await admin.rpc("receive_whatsapp_attendance_button",{p_message_id:message.id,p_phone:message.from,p_phone_id:config.phoneId,p_inbox:decision.inboxId,p_token:decision.token,p_decision:decision.decision,p_at:at.toISOString(),p_reply_to:message.context?.id??null});
           console.info("WhatsApp attendance intake",{stage:"button",messageId:message.id,reportId:decision.inboxId,accepted:stored.data===true,databaseCode:stored.error?.code});
@@ -49,7 +50,7 @@ export async function handleMetaWebhook(request: Request, db: () => SupabaseClie
           continue;
         }
         if(message.type!=="text")continue;
-        const stored = await admin.rpc("receive_whatsapp_attendance", { p_message_id: message.id, p_phone: message.from, p_phone_id: config.phoneId, p_text: message.text.body, p_at: at.toISOString() });
+        const stored = await admin.rpc(isInventoryMessage(message.text.body)?"receive_inventory_whatsapp":"receive_whatsapp_attendance", { p_message_id: message.id, p_phone: message.from, p_phone_id: config.phoneId, p_text: message.text.body, p_at: at.toISOString() });
         console.info("WhatsApp attendance intake",{stage:"inbound",messageId:message.id,accepted:stored.data===true,databaseCode:stored.error?.code});
         if (stored.error) throw stored.error;
       }
