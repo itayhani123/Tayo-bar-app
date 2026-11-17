@@ -1,11 +1,12 @@
 import {z} from "zod";
+import {classifyWhatsAppReport} from "@/lib/whatsapp/report-routing";
 export const INVENTORY_POLICY="inventory_bottles_v1";
 export const inventoryExtractionSchema=z.object({kind:z.enum(["consumption","receipt","unsupported"]),venue:z.string().nullable(),day:z.number().int().min(1).max(31).nullable(),month:z.number().int().min(1).max(12).nullable(),year:z.number().int().min(1900).max(2200).nullable(),entries:z.array(z.object({name:z.string().min(1).max(150),quantity:z.number().nullable()}).strict()).max(100)}).strict();
 export type InventoryExtraction=z.infer<typeof inventoryExtractionSchema>;
 export type Product={id:string;name:string;category:string;bottle_ml:number;stock_qty:number;minimum_qty:number;active:boolean;aliases:string[];cost_agorot?:string;value_agorot?:string};
 export type InventoryEvent={id:string;event_date:string;client_name:string;venue_name:string};
 export type InventoryLine={product_id:string;quantity:number};
-export function isInventoryMessage(text:string){return /(?:צריכ[הת]\s*(?:אלכוהול|מלאי)|התקבלו?\s*(?:למלאי|בקבוקים)|קבלת\s*(?:סחורה|מלאי)|השתמשנו\s*ב[־-]?|דיווח\s*מלאי)/.test(text);}
+export function isInventoryMessage(text:string){return classifyWhatsAppReport(text).startsWith("inventory_");}
 const normalize=(text:string)=>text.normalize("NFKC").replace(/[\u200e\u200f״׳'".,()\-–]/g,"").replace(/\s+/g," ").trim().toLowerCase();
 export function resolveInventory(input:InventoryExtraction,products:Product[],events:InventoryEvent[]){
  if(input.kind==="unsupported"||!input.entries.length)throw new Error("לא זוהה דיווח צריכה או קליטת מלאי. שלחו סוג פעולה, שמות מוצרים וכמויות שלמות.");

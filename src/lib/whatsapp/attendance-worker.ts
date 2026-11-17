@@ -6,11 +6,12 @@ import { attendanceSummary, splitAttendanceMessage, type AttendanceReplyButton }
 import {classifyAttendanceFailure,type AttendanceProcessingStage} from "./attendance-failures";
 import {processInventoryReport} from "@/features/inventory/whatsapp";
 import {INVENTORY_POLICY} from "@/features/inventory/domain";
+import {classifyWhatsAppReport,reportClarification} from "./report-routing";
 
 export type InboxJob = { id: string; report_type?:string;provider_message_id?:string; actor_id: string; phone: string; message_text: string; message_at: string; lease_token: string; attempts: number };
 type ReceiptJob = { id: string; inbox_id: string; phone: string; message_at: string; lease_token: string; attempts: number; kind?: string; body?: string; part_index?: number; message_payload?: {policy?:string;parts?:string[];buttons?:AttendanceReplyButton[]} };
 export const receiptText = "דיווח הנוכחות שלך אושר, וכל שעות העבודה נשמרו באירוע בהצלחה. ניתן לראות את הפרטים באפליקציית Tayo Bar.";
-export async function processAttendanceInbox(db: SupabaseClient, signal: AbortSignal, deps: { extract?: typeof extractAttendance; preview?: typeof previewAttendance } = {}) {
+export async function processAttendanceInbox(db: SupabaseClient, signal: AbortSignal, deps: { extract?: typeof extractAttendance; preview?: typeof previewAttendance; inventory?:typeof processInventoryReport } = {}) {
   const claimed = await db.rpc("claim_whatsapp_attendance", { p_receipt: false }).abortSignal(signal);
   if (claimed.error) throw new Error("INBOX_CLAIM_FAILED");
   const job = claimed.data as InboxJob | null; if (!job) return 0;
@@ -26,7 +27,18 @@ export async function processAttendanceInbox(db: SupabaseClient, signal: AbortSi
       await db.from("whatsapp_attendance_inbox").update({ status: "rejected", error_code: "SENDER_REVOKED", lease_until: null }).eq("id",job.id).eq("lease_token",job.lease_token); return 1;
     }
     stage="extraction";
-    if(job.report_type==="inventory"){await processInventoryReport(db,job,signal);return 1;}
+    const reportType=classifyWhatsAppReport(job.message_text);
+    console.info("WhatsApp report routing",{stage:"classification",reportId:job.id,messageId:job.provider_message_id,storedType:job.report_type,reportType,attempt:job.attempts});
+    if(reportType==="clarification")throw new AttendanceInputError(reportClarification);
+    const domain=reportType==="attendance"?"attendance":"inventory";
+    if(domain!==job.report_type&&(domain==="inventory"||job.report_type!==undefined)){
+      // Repair old classifications only for this claimed lease, before preparing
+      // any proposal. Never reset queues or touch already reviewed reports.
+      const routed=await db.from("whatsapp_attendance_inbox").update({report_type:domain}).eq("id",job.id).eq("status","processing").eq("lease_token",job.lease_token).select("id").maybeSingle();
+      if(routed.error)throw new AttendanceDatabaseError("route_whatsapp_report",routed.error.code);
+      if(!routed.data)return 1;
+    }
+    if(domain==="inventory"){await (deps.inventory??processInventoryReport)(db,job,signal,undefined,next=>{stage=next;});return 1;}
     const extracted = await (deps.extract ?? extractAttendance)(job.message_text,signal);
     // This only prepares existing employees for assignment. The signed, actor-bound
     // WhatsApp confirmation is still mandatory before the atomic write.

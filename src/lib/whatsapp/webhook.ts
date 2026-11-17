@@ -2,7 +2,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { parseAttendanceDecision } from "./attendance-messages";
-import {isInventoryMessage,parseInventoryButton} from "@/features/inventory/domain";
+import {parseInventoryButton} from "@/features/inventory/domain";
+import {classifyWhatsAppReport} from "./report-routing";
 
 export function validMetaSignature(raw: Uint8Array, signature: string | null, secret: string | undefined) {
   if (!secret || !signature || !/^sha256=[a-f0-9]{64}$/i.test(signature)) return false;
@@ -50,11 +51,12 @@ export async function handleMetaWebhook(request: Request, db: () => SupabaseClie
           continue;
         }
         if(message.type!=="text")continue;
-        const stored = await admin.rpc(isInventoryMessage(message.text.body)?"receive_inventory_whatsapp":"receive_whatsapp_attendance", { p_message_id: message.id, p_phone: message.from, p_phone_id: config.phoneId, p_text: message.text.body, p_at: at.toISOString() });
-        console.info("WhatsApp attendance intake",{stage:"inbound",messageId:message.id,accepted:stored.data===true,databaseCode:stored.error?.code});
+        const reportType=classifyWhatsAppReport(message.text.body);
+        const stored = await admin.rpc(reportType.startsWith("inventory_")?"receive_inventory_whatsapp":"receive_whatsapp_attendance", { p_message_id: message.id, p_phone: message.from, p_phone_id: config.phoneId, p_text: message.text.body, p_at: at.toISOString() });
+        console.info("WhatsApp attendance intake",{stage:"inbound",reportType,messageId:message.id,accepted:stored.data===true,databaseCode:stored.error?.code});
         if (stored.error) throw stored.error;
       }
     }
     return Response.json({ received: true });
-  } catch { console.error("WhatsApp webhook durable intake failed",{code:"DURABLE_INTAKE_FAILED"});return new Response("Durable intake unavailable; retry", { status: 503 }); }
+  } catch(error) { const code=(error as {code?:string})?.code;console.error("WhatsApp webhook durable intake failed",{code:"DURABLE_INTAKE_FAILED",originalCode:typeof code==="string"&&/^(?:[A-Z0-9]{5}|PGRST\d{3})$/.test(code)?code:undefined});return new Response("Durable intake unavailable; retry", { status: 503 }); }
 }

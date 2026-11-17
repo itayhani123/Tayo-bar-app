@@ -1,16 +1,15 @@
 "use client";
 import {useRef,useState} from "react";
 import {useQuery,useQueryClient} from "@tanstack/react-query";
-import {formatAgorot,parseAgorot,type Product,type InventoryEvent,type InventoryLine} from "./domain";
+import {formatAgorot,parseAgorot,type Product,type InventoryLine} from "./domain";
+import {inventoryRequest,loadInventory} from "./contract";
 type Movement={id:string;report_id:string;product_id:string;product_name:string;bottle_ml:number;event_id:string|null;kind:string;quantity_delta:number;unit_cost_agorot?:string;total_cost_agorot?:string;actor_id:string;created_at:string;reason:string|null;correction_of:string|null};
-type Report={id:string;kind:string;event_id:string|null;lines:InventoryLine[];status:string;actor_id:string;inbox_id:string|null;reason:string|null;confirmed_at:string|null;confirmed_by:string|null;preview_costs?:{total_cost_agorot:string}[]};
-type Data={products:Product[];movements:Movement[];reports:Report[];events:InventoryEvent[];costs:{event_id:string;cost_agorot:string}[];inbox:{id:string;message_text:string;status:string;error_code:string|null;delivery_status:string|null}[];senders:{phone:string;can_receive:boolean}[];role:string;actor:string;actorLabels:Record<string,string>};
-async function api(body?:unknown):Promise<Data&{result:string}>{const response=await fetch("/api/inventory",{method:body?"POST":"GET",headers:body?{"Content-Type":"application/json"}:undefined,body:body?JSON.stringify(body):undefined,cache:"no-store"});const data=await response.json();if(!response.ok)throw new Error(data.error||"לא ניתן להשלים את הפעולה");return data;}
+async function api(body:unknown):Promise<{result:string}>{const data=await inventoryRequest(body);if(!data||typeof data!=="object"||!("result" in data))throw new Error("תשובת השמירה אינה תקינה. יש לבדוק את מצב הדיווח לפני ניסיון חוזר.");return data as {result:string};}
 const field="min-h-11 rounded-lg border border-input bg-background px-3 py-2 text-sm w-full";
 const button="min-h-11 rounded-lg border px-4 py-2 text-sm disabled:opacity-50";
 const kinds:Record<string,string>={consumption:"צריכה לאירוע",receipt:"קליטת מלאי",adjustment:"התאמה ידנית",reversal:"תיקון בתנועה נגדית"};
 export function InventoryPage({initialEvent=""}:{initialEvent?:string}){
- const query=useQuery({queryKey:["inventory"],queryFn:()=>api(),refetchInterval:15000}),cache=useQueryClient();
+ const query=useQuery({queryKey:["inventory"],queryFn:()=>loadInventory(),refetchInterval:15000,retry:1,retryOnMount:false}),cache=useQueryClient();
  const [search,setSearch]=useState(""),[category,setCategory]=useState(""),[low,setLow]=useState(false),[inactive,setInactive]=useState(false),[eventFilter,setEventFilter]=useState(initialEvent);
  const [error,setError]=useState(""),[notice,setNotice]=useState(""),[busy,setBusy]=useState(false);const lock=useRef(false);
  const [editing,setEditing]=useState<Product|null|undefined>(),[pending,setPending]=useState<{id:string;kind:string;lines:InventoryLine[];eventId:string|null;reason:string|null}|null>(null);
@@ -19,7 +18,7 @@ export function InventoryPage({initialEvent=""}:{initialEvent?:string}){
  const data=query.data,owner=data?.role==="owner";
  async function perform(body:unknown,success:string,onResult?:(data:Awaited<ReturnType<typeof api>>)=>void){if(lock.current)return;lock.current=true;setBusy(true);setError("");setNotice("");try{const result=await api(body);onResult?.(result);setNotice(success);await Promise.all(["inventory","events","dashboard","reports","calendar-finance-statuses"].map(key=>cache.invalidateQueries({queryKey:[key]})));}catch(e){setError((e as Error).message);}finally{lock.current=false;setBusy(false);}}
  if(query.isLoading)return <p role="status">טוען מלאי…</p>;
- if(query.error||!data)return <p role="alert">{query.error?.message||"לא ניתן לטעון מלאי. יש לבדוק הרשאות ומיגרציות."}</p>;
+ if(query.error||!data)return <div dir="rtl" className="space-y-3"><h1 className="text-2xl font-semibold">מלאי אלכוהול</h1><p role="alert">{query.error?.message||"לא ניתן לטעון מלאי. יש לבדוק הרשאות ומיגרציות."}</p><button className={button} onClick={()=>void query.refetch()}>נסה שוב</button></div>;
  const products=data.products.filter(p=>(inactive||p.active)&&(!category||p.category===category)&&(!low||p.stock_qty<p.minimum_qty)&&`${p.name} ${p.bottle_ml} ${p.aliases.join(" ")}`.includes(search));
  const value=data.products.reduce((total,p)=>total+BigInt(p.value_agorot||"0"),BigInt(0));
  const movementRows=data.movements.filter(m=>!eventFilter||m.event_id===eventFilter);

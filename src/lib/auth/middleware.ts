@@ -16,7 +16,7 @@ export async function updateAuthSession(request: NextRequest) {
   const { response, claims } = await updateSession(request);
 
   if (!claims && pathname !== "/login") {
-    if (pathname === "/api/ai-assistant" || pathname === "/api/ai-assistant/actions") {
+    if (pathname === "/api/ai-assistant" || pathname === "/api/ai-assistant/actions" || pathname === "/api/inventory") {
       const unauthorized = NextResponse.json({ error: "יש להתחבר מחדש" }, { status: 401, headers: { "Cache-Control": "no-store" } });
       response.cookies.getAll().forEach(cookie => unauthorized.cookies.set(cookie));
       return unauthorized;

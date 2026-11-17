@@ -37,7 +37,7 @@ Button delivery failure follows the existing visible error/retry path; there is 
 
 No Production migration, deployment, commit or push was performed for this change.
 
-After review and explicit approval, apply migrations **027 then 028**, following the existing migrations through 026, before deploying this code. Review the linked Supabase project before any `db push`; do not rerun old migrations blindly. Both migrations are additive/idempotent and do not seed products or modify existing attendance data. Migration 028 preserves the existing attendance decision/acknowledgement behavior while adding domain dispatch.
+After review and explicit approval, fresh installations apply **027 → 028 → 029 → 030**, following migrations through 026. The inspected deployed database already has an older variant of 027: do not rerun its CREATE TABLE statements. Review migration history and apply pending **028 → 029 → 030**; 030 adds missing snapshot columns and refreshes the inventory contract. See [the incident report](inventory-production-incident-2026-11-17.md) for verified drift, validation and release steps. Migration 028 preserves the existing attendance decision/acknowledgement behavior while adding domain dispatch. No products or prices are seeded.
 
 No new environment variables, Meta templates, webhook URLs or scheduled jobs are required. Existing Supabase server credentials, OpenAI configuration and working Meta Cloud API/outbox configuration are reused. Prices must be entered by an owner in the app; no real catalog or financial values are invented or seeded.
 

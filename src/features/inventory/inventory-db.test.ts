@@ -2,12 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {PGlite} from "@electric-sql/pglite";
+import {inventoryOverviewSchema} from "./contract";
 const owner="11111111-1111-4111-8111-111111111111",manager="22222222-2222-4222-8222-222222222222",event="33333333-3333-4333-8333-333333333333",venue="44444444-4444-4444-8444-444444444444";
 test("inventory PostgreSQL: exact money, roles, ledger, atomic multi-product confirmation, reversal and shared WhatsApp queues",async t=>{
  const pg=new PGlite();try{
   await pg.exec(`create role anon;create role authenticated;create role service_role bypassrls;create schema auth;create table auth.users(id uuid primary key);create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;create table profiles(id uuid primary key,role text);create table venues(id uuid primary key,name text);create table employees(id uuid primary key,full_name text,active boolean,default_hourly_rate numeric);create table business_settings(key text primary key,numeric_value numeric);create table ai_action_audit(actor_id uuid,action text,target_id uuid,outcome text);insert into auth.users values('${owner}'),('${manager}');insert into profiles values('${owner}','owner'),('${manager}','manager');insert into venues values('${venue}','אפטאון');`);
   await pg.exec("create table app_notifications(role_target text,notification_type text,title text,message text,severity text,entity_type text,entity_id uuid,action_url text,dedupe_key text);create unique index on app_notifications(dedupe_key) where dedupe_key is not null;grant select on app_notifications to service_role");
   for(const f of ["002_events.sql","005_event_staffing.sql","019_ai_attendance_import.sql","020_whatsapp_attendance_inbox.sql","021_whatsapp_sender_configuration_repair.sql","022_whatsapp_attendance_bot.sql","023_whatsapp_receipt_created_at.sql","024_whatsapp_attendance_confirmation_ux.sql","025_whatsapp_attendance_buttons_only.sql","026_whatsapp_attendance_reliability.sql","027_inventory.sql","028_inventory_whatsapp.sql"])await pg.exec(readFileSync(`supabase/migrations/${f}`,"utf8"));
+  await pg.exec(readFileSync("supabase/migrations/029_inventory_failure_feedback.sql","utf8"));
+  // Reproduce the deployed 027 variant: tables exist but preview snapshots do not.
+  await pg.exec("alter table inventory_reports drop column preview_costs;alter table inventory_reports drop column event_snapshot");
+  const alignment=readFileSync("supabase/migrations/030_inventory_schema_alignment.sql","utf8");
+  await pg.exec(alignment);await pg.exec(alignment);
   await pg.query("insert into events(id,event_date,start_time,event_type,venue_id,client_name,guest_count,price_per_guest,package_type,payer_type) values($1,'2026-11-15','12:30','Wedding',$2,'מעיין',100,20,'Basic','client')",[event,venue]);
   await pg.exec("grant usage on schema public,auth to service_role,authenticated;grant select,update(id) on profiles to service_role;grant select on profiles to authenticated;grant select on events,venues to service_role;set role service_role");
   async function rpc<T=unknown>(name:string,args:Record<string,unknown>){const vals=Object.values(args).map(v=>v&&typeof v==="object"?JSON.stringify(v):v);return(await pg.query<{v:T}>(`select ${name}(${Object.keys(args).map((key,i)=>`${key}=>$${i+1}`).join(",")}) v`,vals)).rows[0].v;}
@@ -15,7 +21,9 @@ test("inventory PostgreSQL: exact money, roles, ledger, atomic multi-product con
   const prepare=(kind:string,lines:{product_id:string;quantity:number}[],actor=owner,eventId:string|null=null)=>rpc<string>("inventory_prepare",{p_actor:actor,p_kind:kind,p_event:eventId,p_lines:lines,p_key:crypto.randomUUID(),p_reason:kind==="adjustment"?"ספירה":null});
   const confirm=(id:string,actor=owner)=>rpc<{status:string;replayed?:boolean}>("inventory_confirm",{p_actor:actor,p_report:id});
   const stock=async(id:string)=>Number((await pg.query<{stock_qty:number}>("select stock_qty from inventory_products where id=$1",[id])).rows[0].stock_qty);
+  const emptyOverview=inventoryOverviewSchema.parse(await rpc("inventory_overview",{p_actor:owner}));assert.deepEqual(emptyOverview.products,[]);assert.deepEqual(emptyOverview.inbox,[]);
   const grey=await product("גרייגוס","9000"),james=await product("ג'יימסון","7500"),arak=await product("ערק","4500");
+  assert.equal(inventoryOverviewSchema.parse(await rpc("inventory_overview",{p_actor:manager})).products.length,3);
   await t.test("owner-only prices and direct balance edits denied; central receipt requires a ledger",async()=>{
    await assert.rejects(product("אסור","100",manager),/INVENTORY_FORBIDDEN/);
    await assert.rejects(pg.query("update inventory_products set stock_qty=99 where id=$1",[grey]),/INVENTORY_LEDGER_REQUIRED/);
@@ -89,12 +97,25 @@ test("inventory PostgreSQL: exact money, roles, ledger, atomic multi-product con
    const attendance=await rpc<{id:string;lease_token:string;report_type:string}>("claim_whatsapp_attendance",{p_receipt:false});assert.equal(attendance.report_type,"attendance");
    await rpc("complete_whatsapp_attendance_analysis",{p_inbox:attendance.id,p_lease:attendance.lease_token,p_extracted:{},p_preview:{confirmationPolicy:"buttons_attendance_v2",rows:[],issues:["נדרשים פרטי נוכחות"]},p_parts:["נדרשים פרטי נוכחות"]});
    await ack(attendance.id);assert.equal((await click(attendance.id,"cancel")).status,"cancelled");assert.equal(await stock(james),17);
+   for(const [rpcName,messageId,expected]of[["receive_inventory_whatsapp","inventory-failure",/דיווח המלאי/],["receive_whatsapp_attendance","attendance-failure",/לא נשמרו שעות/]] as const){
+    await rpc(rpcName,{p_message_id:messageId,p_phone:phone,p_phone_id:"phone",p_text:"בדיקת כשל",p_at:new Date().toISOString()});
+    const failed=await rpc<{id:string;lease_token:string}>("claim_whatsapp_attendance",{p_receipt:false});
+    await pg.query("update whatsapp_attendance_inbox set status='failed',error_code='PROCESSING_FAILED' where id=$1",[failed.id]);
+    await rpc("queue_whatsapp_attendance_failure",{p_inbox:failed.id,p_lease:failed.lease_token});
+    const feedback=await pg.query<{body:string}>("select body from whatsapp_attendance_receipts where inbox_id=$1 and kind='failure'",[failed.id]);
+    assert.equal(feedback.rows.length,1);assert.match(feedback.rows[0].body,expected);
+    if(rpcName==="receive_inventory_whatsapp")assert.doesNotMatch(feedback.rows[0].body,/שעות|נוכחות/);
+   }
    await pg.exec("reset role;set role authenticated;select set_config('request.jwt.claim.sub','"+manager+"',false)");assert.equal((await pg.query("select * from inventory_products")).rows.length,0);
    await assert.rejects(pg.query("select inventory_save_product($1,null,'{}')",[owner]),/permission denied/);
    await assert.rejects(pg.query("update inventory_products set cost_agorot=1"),/permission denied/);
    await assert.rejects(pg.query("select read_inventory_event_costs($1)",[`{${event}}`]),/INVENTORY_FORBIDDEN/);
    await pg.exec("select set_config('request.jwt.claim.sub','"+owner+"',false)");assert.equal((await pg.query("select * from inventory_products")).rows.length,3);
    await assert.rejects(pg.query("update inventory_products set stock_qty=7"),/permission denied/);
+   const snapshot=async()=> (await pg.query<{value:unknown}>("select jsonb_build_object('products',(select jsonb_agg(to_jsonb(p) order by id) from inventory_products p),'movements',(select jsonb_agg(to_jsonb(m) order by id) from inventory_movements m),'reports',(select jsonb_agg(to_jsonb(r) order by id) from inventory_reports r)) value")).rows[0].value;
+   const before=await snapshot();
+   await pg.exec("reset role");await pg.exec(alignment);await pg.exec("set role service_role");
+   assert.deepEqual(await snapshot(),before,"alignment must preserve catalog, balances, reports and the entire movement ledger");
   });
  }finally{await pg.close();}
 });

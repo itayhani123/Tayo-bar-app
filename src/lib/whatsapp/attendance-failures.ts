@@ -1,6 +1,7 @@
 export type AttendanceProcessingStage="sender_lookup"|"extraction"|"preview"|"pending_approval"|"correction";
 const messages:Record<string,string>={
  WHATSAPP_WORKER_VERSION_MISMATCH:"גרסת הבוט בשרת אינה תואמת לסכמת מסד הנתונים. יש לפרוס את קוד הבוט המעודכן.",
+ WHATSAPP_RESPONSE_INVALID:"מבנה נתוני המלאי אינו תואם לגרסת הבוט. נדרשת בדיקת inventory_catalog והמיגרציות.",
  WHATSAPP_SCHEMA_MISSING:"רכיב נוכחות נדרש חסר בסכמת מסד הנתונים. נדרשת בדיקת מיגרציות בפרויקט הנכון.",
  WHATSAPP_DATABASE_PERMISSION_DENIED:"מסד הנתונים דחה את הרשאות השרת. נדרשת בדיקת הרשאות החיבור.",
  WHATSAPP_AI_REQUEST_REJECTED:"שירות הפענוח דחה את הבקשה. נדרשת בדיקת הגדרת המודל והבקשה בשרת.",
@@ -18,6 +19,7 @@ export function classifyAttendanceFailure(error:unknown,stage:AttendanceProcessi
  const upstreamStatus=typeof source.status==="number"&&[400,401,403,404,408,409,422,429,500,502,503,504].includes(source.status)?source.status:undefined;
  let code="PROCESSING_FAILED",retryable=true;
  if(source.message==="WHATSAPP_WORKER_VERSION_MISMATCH"){code="WHATSAPP_WORKER_VERSION_MISMATCH";retryable=false;}
+ else if(source.message==="INVENTORY_RESPONSE_INVALID"){code="WHATSAPP_RESPONSE_INVALID";retryable=false;}
  else if(["42703","42883","42P01","PGRST202","PGRST204","PGRST205"].includes(originalCode||"")){code="WHATSAPP_SCHEMA_MISSING";retryable=false;}
  else if(originalCode==="42501"){code="WHATSAPP_DATABASE_PERMISSION_DENIED";retryable=false;}
  else if(source.message==="AI_CONFIGURATION_MISSING"){code="WHATSAPP_AI_CONFIGURATION_MISSING";retryable=false;}
