@@ -17,7 +17,7 @@ export function attendanceSummary(preview: AttendancePreview): string[] {
   const valid = Boolean(event && preview.rows.length && !preview.issues.length && preview.rows.every(row => row.employeeId && !row.issues.length));
   const lines = [valid ? "📋 דיווח נוכחות לאישור" : "⚠️ לא ניתן לשמור את הדיווח."];
   if(event) lines.push(`📍 ${event.venueName} — ${event.client_name}`,`📅 ${event.event_date.split("-").reverse().join(".")}`);
-  else lines.push(preview.events.length>1 ? `לא נמצאה התאמה חד־משמעית לאירוע ב${preview.extracted.venue || "אולם שצוין"}. בדקו את האולם והתאריך.` : `לא מצאתי אירוע מתאים ב${preview.extracted.venue || "אולם שצוין"}. בדקו את האולם והתאריך.`);
+  else lines.push(preview.events.length>1 ? "נמצאו כמה אירועים מתאימים. ציינו אולם, סוג אירוע, תאריך ושם לקוח. אם עדיין יש כמה אפשרויות, בחרו אירוע באפליקציה לפני אישור השעות." : `לא מצאתי אירוע מתאים ב${preview.extracted.venue || "אולם שצוין"}. בדקו את האולם, סוג האירוע, התאריך ושם הלקוח.`);
   if(preview.rows.length>1)lines.push(`👥 ${preview.rows.filter(row=>row.employeeId).length} עובדים זוהו`);
   for (const row of preview.rows) {
     lines.push("",`👤 ${row.name}`);

@@ -1,3 +1,4 @@
+import { eventHints, matchingVenueNames, normalizeEventText } from "./event-hints";
 import { z } from "zod";
 import { eventInstant } from "@/lib/whatsapp/scheduling";
 import { getWorkedMinutes } from "@/features/event-staffing/calculations";
@@ -7,11 +8,12 @@ export const attendanceExtractionSchema = z.object({
   venue: z.string().nullable(), day: z.number().int().min(1).max(31).nullable(),
   month: z.number().int().min(1).max(12).nullable(), year: z.number().int().min(1900).max(2200).nullable(),
   weekday: z.number().int().min(0).max(6).nullable(),
+  eventType: z.string().nullable().optional(), clientName: z.string().nullable().optional(),
   entries: z.array(z.object({ name: z.string().min(1).max(120), direction: z.enum(["in", "out"]), time: z.string().nullable(), note: z.string().nullable() }).strict()).max(200),
 }).strict();
 export type AttendanceExtraction = z.infer<typeof attendanceExtractionSchema>;
 export type AttendanceEmployee = { id: string; full_name: string };
-export type AttendanceEvent = { id: string; event_date: string; venue_id: string | null; client_name: string };
+export type AttendanceEvent = { id: string; event_date: string; venue_id: string | null; client_name: string; event_type?: string };
 export type AttendanceAssignment = { id: string; event_id: string; employee_id: string; work_start: string | null; work_end: string | null; updated_at: string; notes: string | null };
 export type AttendanceRow = { key: string; name: string; employeeId: string | null; candidates: AttendanceEmployee[]; start: string; end: string; note: string; issues: string[]; minutes: number | null; operation: "create" | "update"; previousStart: string | null; previousEnd: string | null; needs_auto_assignment?: boolean };
 export type AttendancePreview = { extracted: AttendanceExtraction; events: (AttendanceEvent & { venueName: string })[]; eventId: string | null; employees: AttendanceEmployee[]; rows: AttendanceRow[]; issues: string[]; proposalId?: string; expiresAt?: string; confirmationPolicy?: string };
@@ -52,10 +54,12 @@ export function attendanceTimes(date: string, start: string, end: string) {
 }
 export function matchAttendanceEvents(extracted: AttendanceExtraction, events: AttendanceEvent[], venues: { id: string; name: string }[]) {
   if (!extracted.day || !extracted.month || !extracted.venue) return [];
-  const ids = new Set(venues.filter(v => normalizeAttendanceName(v.name) === normalizeAttendanceName(extracted.venue!)).map(v => v.id));
+  const hints=eventHints(extracted);
+  const names=matchingVenueNames(hints.venue,venues.map(v=>v.name));
+  const ids = new Set(venues.filter(v => names.includes(v.name)).map(v => v.id));
   return events.filter(e => {
     const [year, month, day] = e.event_date.split("-").map(Number);
-    return ids.has(e.venue_id ?? "") && day === extracted.day && month === extracted.month && (extracted.year === null || year === extracted.year) && (extracted.weekday === null || new Date(`${e.event_date}T12:00:00Z`).getUTCDay() === extracted.weekday);
+    return (!hints.eventType || e.event_type===hints.eventType) && (!extracted.clientName || normalizeEventText(e.client_name)===normalizeEventText(extracted.clientName)) && ids.has(e.venue_id ?? "") && day === extracted.day && month === extracted.month && (extracted.year === null || year === extracted.year) && (extracted.weekday === null || new Date(`${e.event_date}T12:00:00Z`).getUTCDay() === extracted.weekday);
   }).map(e => ({ ...e, venueName: venues.find(v => v.id === e.venue_id)!.name }));
 }
 export function buildAttendanceRows(extracted: AttendanceExtraction, employees: AttendanceEmployee[], assignments: AttendanceAssignment[], date?: string, correction?: AttendanceCorrection): AttendanceRow[] {
