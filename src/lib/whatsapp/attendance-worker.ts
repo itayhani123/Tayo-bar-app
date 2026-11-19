@@ -1,3 +1,5 @@
+import {EVENT_SELECTION_POLICY,eventSelectionParts} from "./event-selection";
+import {attendanceExtractionSchema} from "@/features/ai-assistant/attendance";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { extractAttendance, previewAttendance, previewWhatsAppAttendance, WHATSAPP_ATTENDANCE_POLICY, AttendanceDatabaseError } from "@/features/ai-assistant/attendance-service";
 import { AttendanceDeliveryError } from "./attendance-delivery";
@@ -8,8 +10,8 @@ import {processInventoryReport} from "@/features/inventory/whatsapp";
 import {INVENTORY_POLICY} from "@/features/inventory/domain";
 import {classifyWhatsAppReport,reportClarification} from "./report-routing";
 
-export type InboxJob = { id: string; report_type?:string;provider_message_id?:string; actor_id: string; phone: string; message_text: string; message_at: string; lease_token: string; attempts: number };
-type ReceiptJob = { id: string; inbox_id: string; phone: string; message_at: string; lease_token: string; attempts: number; kind?: string; body?: string; part_index?: number; message_payload?: {policy?:string;parts?:string[];buttons?:AttendanceReplyButton[]} };
+export type InboxJob = { extracted?:unknown;preview?:{eventSelection?:{state?:string;eventId?:string;token?:string;expiresAt?:string}}; id: string; report_type?:string;provider_message_id?:string; actor_id: string; phone: string; message_text: string; message_at: string; lease_token: string; attempts: number };
+type ReceiptJob = { id: string; inbox_id: string; phone: string; message_at: string; lease_token: string; attempts: number; kind?: string; body?: string; part_index?: number; message_payload?: {policy?:string;token?:string;parts?:string[];buttons?:AttendanceReplyButton[]} };
 export const receiptText = "דיווח הנוכחות שלך אושר, וכל שעות העבודה נשמרו באירוע בהצלחה. ניתן לראות את הפרטים באפליקציית Tayo Bar.";
 export async function processAttendanceInbox(db: SupabaseClient, signal: AbortSignal, deps: { extract?: typeof extractAttendance; preview?: typeof previewAttendance; inventory?:typeof processInventoryReport } = {}) {
   const claimed = await db.rpc("claim_whatsapp_attendance", { p_receipt: false }).abortSignal(signal);
@@ -39,12 +41,19 @@ export async function processAttendanceInbox(db: SupabaseClient, signal: AbortSi
       if(!routed.data)return 1;
     }
     if(domain==="inventory"){await (deps.inventory??processInventoryReport)(db,job,signal,undefined,next=>{stage=next;});return 1;}
-    const extracted = await (deps.extract ?? extractAttendance)(job.message_text,signal);
+    const selectedEventId=job.preview?.eventSelection?.state==="selected"?job.preview.eventSelection.eventId:undefined;
+    const extracted = selectedEventId?attendanceExtractionSchema.parse(job.extracted):await (deps.extract ?? extractAttendance)(job.message_text,signal);
     // This only prepares existing employees for assignment. The signed, actor-bound
     // WhatsApp confirmation is still mandatory before the atomic write.
     stage="preview";
-    const preview = await previewWhatsAppAttendance(db,job.actor_id,profile.data.role,extracted,undefined,signal,deps.preview,job.id);
+    const preview = await previewWhatsAppAttendance(db,job.actor_id,profile.data.role,extracted,selectedEventId?{eventId:selectedEventId,rows:[]}:undefined,signal,deps.preview,job.id);
     stage="pending_approval";
+    if(!preview.eventId&&preview.events.length>1){
+      if(preview.events.length>20)throw new AttendanceInputError("נמצאו יותר מ־20 אירועים. ציינו תאריך מלא, סוג אירוע ושם לקוח כדי לצמצם את האפשרויות.");
+      const prepared=await db.rpc("prepare_whatsapp_event_selection",{p_inbox:job.id,p_lease:job.lease_token,p_extracted:extracted,p_preview:preview,p_parts:eventSelectionParts(preview),p_ids:preview.events.map(e=>e.id)}).abortSignal(signal);
+      if(prepared.error){if(prepared.error.message==="EVENT_SELECTION_REQUIRES_NEW_REPORT")throw new AttendanceInputError("?????? ??? ??? ???? ????? ????. ???? ????? ??? ??? ????? ????? ??? ????? ????? ????.");throw new AttendanceDatabaseError("prepare_whatsapp_event_selection",prepared.error.code);}
+      return 1;
+    }
     const result = await db.rpc("complete_whatsapp_attendance_analysis", { p_inbox:job.id,p_lease:job.lease_token,p_extracted:extracted,p_preview:preview,p_parts:attendanceSummary(preview) }).abortSignal(signal);
     if(result.error){
       const failure=new AttendanceDatabaseError("complete_whatsapp_attendance_analysis",result.error.code);
@@ -81,9 +90,15 @@ export async function processAttendanceReceipt(db: SupabaseClient, send: (phone:
     if(job.kind==="summary"&&![WHATSAPP_ATTENDANCE_POLICY,INVENTORY_POLICY].includes(job.message_payload?.policy||""))throw new AttendanceDeliveryError("SUMMARY_POLICY_OUTDATED",false);
     if(job.kind==="summary"&&!job.message_payload?.buttons?.length)throw new AttendanceDeliveryError("INTERACTIVE_REQUIRED",false);
     if(job.kind){
-      const report=await db.from("whatsapp_attendance_inbox").select("actor_id,status,report_type").eq("id",job.inbox_id).single();
+      const report=await db.from("whatsapp_attendance_inbox").select("actor_id,status,report_type,preview").eq("id",job.inbox_id).single();
       if(report.error)throw report.error;
       if(job.kind==="summary"&&((report.data.report_type==="inventory")!==(job.message_payload?.policy===INVENTORY_POLICY)))throw new AttendanceDeliveryError("SUMMARY_POLICY_OUTDATED",false);
+      if(job.message_payload?.policy===EVENT_SELECTION_POLICY){
+        const choice=report.data.preview?.eventSelection;
+        if(report.data.status!=="review"||choice?.state!=="awaiting"||choice.token!==job.message_payload.token||Date.parse(choice.expiresAt)<=Date.now()){
+          const expired=await db.from("whatsapp_attendance_receipts").update({status:"expired",error_code:"EVENT_SELECTION_SUPERSEDED",lease_until:null}).eq("id",job.id).eq("lease_token",job.lease_token);if(expired.error)throw expired.error;return 1;
+        }
+      }
       const sender=await db.from("whatsapp_attendance_senders").select("user_id,enabled").eq("phone",job.phone).single();
       const profile=await db.from("profiles").select("role").eq("id",report.data.actor_id).single();
       if(sender.error||profile.error)throw new Error("DELIVERY_AUTH_UNAVAILABLE");
@@ -95,7 +110,7 @@ export async function processAttendanceReceipt(db: SupabaseClient, send: (phone:
     if (latest.error) throw new Error("WINDOW_LOOKUP_FAILED");
     const lastAt=Date.parse(latest.data as string);
     const outsideWindow = !Number.isFinite(lastAt)||Date.now()-lastAt>23.9*3600000;
-    if(job.kind==="summary"&&outsideWindow)throw new AttendanceDeliveryError("INTERACTIVE_WINDOW_CLOSED",false);
+    if((job.kind==="summary"||job.message_payload?.policy===EVENT_SELECTION_POLICY)&&outsideWindow)throw new AttendanceDeliveryError("INTERACTIVE_WINDOW_CLOSED",false);
     const templateAvailable=job.kind&&job.kind!=="result"?hasUpdateTemplate:hasTemplate;
     if (outsideWindow && !templateAvailable) {
       const expired = await db.from("whatsapp_attendance_receipts").update({ status: "expired", error_code: "APPROVED_TEMPLATE_REQUIRED", lease_until: null }).eq("id",job.id).eq("lease_token",job.lease_token);

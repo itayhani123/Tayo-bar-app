@@ -40,16 +40,17 @@ export async function loadEventTypes<T extends {id:string;event_type?:string}>(d
  const types=new Map(result.data.map(e=>[e.id,e.event_type]));
  return events.map(e=>({...e,event_type:types.get(e.id)||e.event_type}));
 }
-export async function previewAttendance(db: SupabaseClient, actor: string, role: string, extracted: AttendanceExtraction, correction: AttendanceCorrection | undefined, allowNew: boolean, signal: AbortSignal): Promise<AttendancePreview> {
+export async function previewAttendance(db: SupabaseClient, actor: string, role: string, extracted: AttendanceExtraction, correction: AttendanceCorrection | undefined, allowNew: boolean, signal: AbortSignal, strictMatches=false): Promise<AttendancePreview> {
   const catalog = await rpc<{ events: AttendanceEvent[]; venues: { id: string; name: string }[]; employees: AttendanceEmployee[] }>(db, "ai_attendance_catalog", { p_day: extracted.day, p_month: extracted.month, p_year: extracted.year }, signal);
   if (catalog.employees.length > 2000 || catalog.events.length > 500) throw new Error("יותר מדי התאמות. יש לצמצם את התאריך או לפנות לבעלים");
   const hints=eventHints(extracted);
   catalog.events=await loadEventTypes(db,catalog.events,hints.eventType,signal);
   const compatible=catalog.events.filter(e=>(!hints.eventType||e.event_type===hints.eventType)&&(!extracted.clientName||normalizeEventText(e.client_name)===normalizeEventText(extracted.clientName)));
-  const matches = matchAttendanceEvents(extracted, compatible, catalog.venues);
+  let matches = matchAttendanceEvents(extracted, compatible, catalog.venues);
+  if(strictMatches&&matches.length>1)matches=await loadEventTypes(db,matches,"DISPLAY_TYPES",signal);
   // No fuzzy event is ever auto-selected. Date candidates remain explicitly selectable for typos.
-  const events = matches.length ? matches : compatible.map(e => ({ ...e, venueName: catalog.venues.find(v => v.id === e.venue_id)?.name ?? "אולם לא ידוע" }));
-  const eventId = correction?.eventId && events.some(e => e.id === correction.eventId) ? correction.eventId : matches.length === 1 ? matches[0].id : null;
+  const events = strictMatches ? matches : matches.length ? matches : compatible.map(e => ({ ...e, venueName: catalog.venues.find(v => v.id === e.venue_id)?.name ?? "אולם לא ידוע" }));
+  const eventId = strictMatches && correction?.eventId ? (events.some(e=>e.id===correction.eventId)?correction.eventId:null) : correction?.eventId && events.some(e => e.id === correction.eventId) ? correction.eventId : matches.length === 1 ? matches[0].id : null;
   const event = events.find(e => e.id === eventId);
   const ids = catalog.employees.map(e => e.id);
   const snapshot = eventId ? await rpc<Snapshot>(db, "ai_attendance_snapshot", { p_event: eventId, p_employees: ids }, signal) : null;
@@ -68,7 +69,7 @@ export async function previewAttendance(db: SupabaseClient, actor: string, role:
       if (snapshot?.assignments.some(a => a.employee_id === row.employeeId && a.event_id !== eventId && a.work_start && (!a.work_end || +new Date(a.work_end) > +new Date(times.work_start)) && +new Date(a.work_start) < +new Date(times.work_end))) row.issues.push("התנגשות עם נוכחות באירוע אחר");
     }
   }
-  const preview: AttendancePreview = { extracted, events, eventId, employees: catalog.employees, rows, issues };
+  const preview: AttendancePreview = { ...(strictMatches?{eventMatchPolicy:"exact_event_match_v1"}:{}),extracted, events, eventId, employees: catalog.employees, rows, issues };
   if (issues.length || rows.some(r => r.issues.length) || !eventId) return preview;
   if (rows.some(r => r.operation === "create") && !allowNew) { issues.push("נדרש אישור נפרד להוספת עובדים שאינם משובצים"); return preview; }
   const employeeIds = rows.map(r => r.employeeId!).sort();
@@ -100,7 +101,7 @@ export async function previewWhatsAppAttendance(
   correction: AttendanceCorrection | undefined, signal: AbortSignal,
   prepare: typeof previewAttendance = previewAttendance, reportId?:string,
 ): Promise<AttendancePreview> {
-  const preview = await prepare(db, actor, role, extracted, correction, true, signal);
+  const preview = await prepare(db, actor, role, extracted, correction, true, signal, true);
   const event = preview.events.find(event => event.id === preview.eventId);
   const rows=preview.rows.map(row=>{
     const issues=[...row.issues];

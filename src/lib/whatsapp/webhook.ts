@@ -1,3 +1,4 @@
+import {isEventSelectionText,parseEventSelectionButton} from "./event-selection";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
@@ -43,6 +44,12 @@ export async function handleMetaWebhook(request: Request, db: () => SupabaseClie
         const parsed = messageSchema.safeParse(rawMessage); if (!parsed.success) continue;
         const message = parsed.data;
         const at = new Date(Number(message.timestamp)*1000); if (!Number.isFinite(+at) || +at>Date.now()+300000) continue;
+        const choice=message.type==="interactive"?parseEventSelectionButton(message.interactive.button_reply.id):null;
+        if(choice||(message.type==="text"&&isEventSelectionText(message.text.body))){
+          const stored=await admin.rpc("receive_whatsapp_event_selection",{p_message_id:message.id,p_phone:message.from,p_phone_id:config.phoneId,p_text:message.type==="text"?message.text.body:null,p_at:at.toISOString(),p_inbox:choice?.inboxId??null,p_token:choice?.token??null,p_event:choice?.eventId??null,p_action:choice?.action??"select",p_reply_to:message.context?.id??null});
+          if(stored.error)throw stored.error;
+          if(stored.data===true)continue;
+        }
         const decision=message.type==="interactive"?(parseInventoryButton(message.interactive.button_reply.id)??parseAttendanceDecision(message.interactive.button_reply.id)):null;
         if(decision){
           const stored=await admin.rpc("receive_whatsapp_attendance_button",{p_message_id:message.id,p_phone:message.from,p_phone_id:config.phoneId,p_inbox:decision.inboxId,p_token:decision.token,p_decision:decision.decision,p_at:at.toISOString(),p_reply_to:message.context?.id??null});
