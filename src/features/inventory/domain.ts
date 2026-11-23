@@ -30,7 +30,7 @@ export function resolveInventory(input:InventoryExtraction,products:Product[],ev
   const direct=find(entry.name);
   const name=direct.length?entry.name:cleanInventoryProductName(entry.name,entry.quantity!,source);
   const matches=direct.length?direct:find(name);
-  if(matches.length!==1)throw new Error(matches.length?`יש כמה מוצרים בשם "${name}". ציינו גם נפח בקבוק.`:`לא נמצא מוצר בשם "${name}". יש לבחור מוצר קיים.`);
+  if(matches.length!==1)throw new Error(matches.length?`יש כמה מוצרים בשם "${name}". ציינו גם נפח בקבוק במ״ל: ${[...new Set(matches.map(p=>p.bottle_ml))].sort((a,b)=>a-b).join(" או ")}. לא עודכן מלאי.`:`לא נמצא מוצר בשם "${name}". יש לבחור מוצר קיים.`);
   const product=matches[0];if(selected.has(product.id))throw new Error(`המוצר "${product.name}" מופיע יותר מפעם אחת. שלחו שורה אחת לכל מוצר.`);selected.add(product.id);
   if(input.kind==="consumption"&&product.stock_qty<entry.quantity)throw new Error(`אין מספיק מלאי של ${product.name} (${product.bottle_ml} מ״ל). זמינים ${product.stock_qty} בקבוקים, דווחו ${entry.quantity}. לא נשמר דבר.`);
   return {product_id:product.id,quantity:entry.quantity};
