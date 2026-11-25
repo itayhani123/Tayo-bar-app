@@ -1,0 +1,212 @@
+﻿TAYO WhatsApp AI ? isolated candidate, no Production actions
+Base: 640d299291be8ee748496cfc670dc964c9a545fb
+Branch: feature/whatsapp-ai-fallback
+
+SAFETY AND CONTROLS
+Migration 034 only; no dependency on 029/031/032. The existing reporting Cron,
+attendance worker, inventory v1, event selection and approval protocols stay intact.
+New whatsapp_ai_control is OFF and whatsapp_ai_senders is EMPTY on installation.
+AI access requires: central enabled flag + pinned business phone_number_id + exact
+phone/user allowlist match + existing enabled sender + owner/manager profile +
+existing Auth user without future banned_until or deleted_at. No caller role is trusted.
+Checks apply at intake, claim, data reads, completion and immediately before send.
+Every control/allowlist update, including SQL Editor edits, bumps a policy revision
+through triggers. Old queued/running answers cannot revive after off/on toggles.
+No per-report preview, proposal, token, event selection or expiry is changed by AI.
+
+READ ONLY BUSINESS ACCESS
+answerQuestion is reused with db=null, no propose/draft/context. Only a bound reader
+can invoke a fixed SELECT-only STABLE RPC. Manager gets operations only; owner gets
+the existing four read tools/calculators. No arbitrary SQL, business writes or
+unrestricted service_role client is exposed to the model. Infrastructure writes
+are restricted to inbox/outbox, quota, control and audit. SQL snapshot reads are
+tested under BEGIN READ ONLY. All browser/public access is denied except three
+owner-only management RPCs; their auth.uid + active Auth + owner checks run in SQL.
+The future admin UI may call read_whatsapp_ai_admin, set_whatsapp_ai_control and
+set_whatsapp_ai_sender using the signed-in owner's Supabase session. No UI was added.
+A manager or missing/banned owner cannot call these. Existing sender permissions
+are never edited to manage AI access. Audit records retain control actor IDs.
+Only one TAYO business per Supabase project is supported; tenant schema must stop.
+
+RESOURCE ISOLATION
+Reporting /api/cron/whatsapp-notifications is byte-equivalent to Production.
+AI has POST-only /api/cron/whatsapp-ai, its own 60-second function budget and its
+own separate scheduler. It never runs inside the attendance/inventory drain.
+WHATSAPP_AI_OPENAI_API_KEY is required and must differ from OPENAI_API_KEY.
+Configure it in a separate OpenAI project with its own rate/cost budget; a different
+key in the same project alone does not isolate project limits. There is no fallback
+to the application/reporting key. Actual provider/account limits need pilot verification; organization-level limits
+may still be shared across projects. Reserve reporting capacity or use an account
+with independent limits before claiming strict provider isolation.
+WHATSAPP_AI_WORKER_SECRET must be random, at least 32 characters and distinct from
+CRON_SECRET. The old reporting Edge Function is not used for AI and is unchanged.
+Use docs/sql/034-whatsapp-ai-scheduler.sql ONLY after approval to create a NEW Cron
+using pg_net and named Vault entries. It does not change/disable the existing Cron.
+References: https://supabase.com/docs/guides/functions/schedule-functions
+https://supabase.com/docs/guides/cron/quickstart
+SQL still checks report/decision/outbox priority, and at most one AI model/send
+lease may be active. The Vercel account concurrency pool and database are shared;
+this is separate function execution, not a dedicated database/hosting account.
+No business lock spans a model/network wait. Production resource limits still need
+validation during the pilot. Never GET a reporting Worker URL as a health check.
+
+TIMEOUT / COST / DELIVERY
+Model deadline 25 seconds, task TTL 20 minutes, max 2 attempts, one global AI lease.
+Channel quotas: 6 attempts/minute/user, 40/day/user, 300/day globally, separate from
+app quotas. Existing engine max 4 rounds/6 tools/1400 output tokens per round.
+Bounded data snapshot and 3800-char answer, no model provider retries or chat history.
+Domain fragments, mutation words, numeric/multiline questions, bare choices and
+quoted replies stay on the conservative report/clarification path.
+AI failure cannot skip remaining report intake in the same Webhook envelope.
+Answers are saved before send. A provider ACK for an already-issued request is still recorded while AI is off;
+recording delivery does not authorize another send. Unknown external delivery is delivery_unknown and
+NEVER automatically resent. No attendance template is used for AI outside its window.
+The database gate prevents a model already running from creating a later send after
+shutdown, and revisions prevent revival after re-enable. A Meta HTTP request already
+issued cannot be recalled. There is also an unavoidable non-atomic boundary between
+the final database authorization and issuing an external request: no distributed
+transaction with Meta is claimed. Monitor in-flight sends when declaring quiescence.
+
+INSTALLATION ORDER ? FUTURE, REQUIRES EXPLICIT APPROVAL
+1. Verify exact Production SHA, one-business/project/phone mapping and active pilot
+   account. Resolve unknown source hashes; never append a hash without code review.
+2. Run docs/sql/034-whatsapp-ai-preflight.sql read-only, require zero FAIL.
+   The business_mapping WARNING requires manual confirmation, not suppression.
+3. Deploy reviewed code with WHATSAPP_AI_FALLBACK_ENABLED absent/false; no AI Cron.
+   Verify Ready/Current + exact source, existing reporting still works unchanged.
+4. Apply ONLY supabase/migrations/034_whatsapp_ai_readonly.sql in SQL Editor. It is
+   transactional with MD5 guards, default-off controls, private ACLs and rollback.
+   Do NOT bulk db push; SQL Editor migration history requires separate reconciliation.
+5. Run docs/sql/034-whatsapp-ai-verify.sql BEFORE configuring the pilot. Initial-state
+   checks intentionally require disabled control, revision zero and empty allowlist.
+6. Privately configure dedicated worker secret, dedicated OpenAI project key and
+   optional separate Cron/Vault job.
+   No literal passwords/connection strings/keys in SQL, git, logs or screenshots.
+7. Owner adds ONLY one phone/user to AI allowlist and pins the existing business
+   phone ID. Leave central enabled=false. Deploy/enable code-level rollout flag.
+8. Owner enables the central switch; test only designated authorized pilot messages.
+   A non-pilot user falls back to existing clarification; no model/data access.
+9. Expand allowlist one account at a time only after controlled observation.
+
+EMERGENCY STOP / RECOVERY
+Owner RPC set_whatsapp_ai_control(false) is immediate at the database gates, without
+redeploy or stopping reporting. DB operator alternative: approved execution of
+034-whatsapp-ai-disable.sql. It touches only AI control/audit; the trigger invalidates
+old leases. Do not disable the ordinary WhatsApp senders or reporting Cron.
+Wait/inspect already-issued Meta requests; ambiguous outcomes are not automatically
+retried. Keep 034 tables/audit installed when rolling the app back to 640d299.
+Never restore old claim bodies while AI jobs exist. Failed 034 installation rolls
+back all DDL/function/ACL changes. Reinstall is deliberately rejected; use verify.
+No tested Production backup/restore is assumed.
+
+LIVE TESTS WITHOUT BUSINESS WRITES
+Ask a clear read question from the pilot, verify the same question from a non-pilot
+never invokes AI. Check owner vs manager read policy in separate one-user phases.
+Test switch off during queued/model work, Auth ban and AI allowlist revocation.
+Use an existing stable pending report to compare its private state/hash before and
+after a question; do not click confirm/cancel or invent events/products in Production.
+AI writes only transport/usage/audit records. Keep live business mutations out of QA.
+
+LOCAL TESTS / BENCHMARK
+node scripts/test.mjs ai-controls
+node scripts/test.mjs ai-db
+node scripts/test.mjs ai-worker
+node scripts/test.mjs ai-report-regression
+node scripts/test.mjs ai-worker-http
+node --import ./scripts/test-register.mjs scripts/benchmark-whatsapp-ai.mjs
+npm.cmd test; npm.cmd run typecheck; next build --webpack
+Benchmark uses disposable PGlite and a SEPARATE OS AI process, real intake/preview/
+summary/button/decision RPCs and synthetic model/provider. It has 10 warmups + 60
+samples per type per mode (off, 5-second model wait, model failure). Attendance
+extraction is deterministic, no real OpenAI/Meta/network latency is measured.
+Only synthetic fixture hours/stock/rate-window timestamps are changed. The 20ms
+p95 delta gate is a local regression threshold, NOT a Production SLA.
+See docs/whatsapp-ai-load-results.json for p50/p95/max and overlap counts. Production
+must validate DB/Vercel limits and burst traffic; tail outliers are retained.
+
+READ-ONLY INSTALL CHECKS
+Before 034: 67 PASS, 1 business_mapping WARNING, 0 FAIL.
+After fresh install before pilot config: 27 PASS, 1 flag WARNING, 0 FAIL.
+Initial-state checks are intentionally installation-only (off, revision=0, empty list).
+Any FAIL stops; never suppress unknown MD5, Auth or privilege failures.
+
+FINAL LOCAL VALIDATION
+Physical Auth deletion of a mapped reporting user is already blocked by legacy
+foreign keys; 034 does not relax those constraints. Tests verify this restriction,
+actual deletion of an unreferenced Auth user, and soft deletion/ban/revocation
+during a model call. Do not delete report history to force an Auth deletion.
+TypeScript and isolated webpack build: PASS. Changed-file ESLint: PASS.
+Full suite: 349 tests, 347 PASS, 2 existing templates FAIL. Full lint: 4 existing errors, 9 warnings.
+The reporting/template/lint-failing source files are unchanged from base 640d299.
+The first unbounded parallel test run exhausted V8/WASM memory. scripts/test.mjs now
+bounds file concurrency to 2 without omitting tests; the full rerun completed.
+SQL preflight/verify executed inside local BEGIN READ ONLY: 67 PASS/1 WARNING and
+27 PASS/1 WARNING respectively. Unknown MD5, ACL and rollback regressions tested locally.
+Benchmark latest raw p50/p95/max values are in docs/whatsapp-ai-load-results.json.
+No Production configuration, migration, deploy, commit or real business data changed.
+Production activation remains NO-GO until approved preflight, identity mapping,
+independent provider/hosting capacity checks and controlled single-user pilot.
+
+REVIEWED PRODUCTION VARIANT - 2026-11-25
+The user supplied the full Production definition and authorized a guarded upgrade.
+Production source 25e1b9ed098814007e3e35fc33b1724a preserves return false at the cap;
+its only 034 change yields target d65c10859435cebe0693f8071913700e.
+Original 020 b68c2839dbf100c5da47bcca8a0c0be2 preserves its exception at the cap;
+its 034 target remains 8946438f48517f966676373073bf617c.
+Both variants only exclude ai_question from the report quota. Exact source/target
+hash pairs are checked inside the same transaction. All pg_proc metadata except
+prosrc must remain identical, including owner, ACL, settings and security mode.
+Preflight and verify each emit one row per function with either reviewed hash.
+Run the entire updated preflight in Production SQL Editor as postgres: require
+67 PASS, 1 business_mapping WARNING, 0 FAIL; verify business mapping manually.
+Any unknown hash/metadata or additional FAIL means stop, never whitelist blindly.
+No install/deploy authorization is implied; the default-off rollout order above
+still applies. Only 034 is needed. See 034-receive-attendance-comparison.txt.
+
+DISABLED RELEASE PREPARATION - 2026-11-25
+Production preflight accepted by owner: 67 PASS/1 WARNING/0 FAIL, all four business
+mapping checks manually confirmed. This does not install 034 or enable AI.
+New release tests prove flag absent/false + no AI secrets + no 034: no AI RPC,
+no fallback model request, no AI task, unchanged pending confirmation, real inventory
+cancel/confirm/replay. Event selection and final confirmation tests now run with
+and without 034 for BOTH legacy receive variants. See whatsapp-ai-disabled-release.txt.
+Fresh origin/main fetch matches base 640d299; local main is stale and untouched.
+An independently verified source backup has 420 files. Final package is sealed
+outside the worktree with a file manifest; no deployment provenance is claimed.
+Fresh Vercel Source Commit and disabled runtime flag still need read-only manual
+verification. Keep AI unscheduled; do not install migrations or alter environments.
+
+SOURCE FILE LIST (33 files relative to this worktree)
+.gitattributes
+docs/034-receive-attendance-comparison.txt
+docs/sql/034-receive-attendance-diagnostics.sql
+docs/sql/034-whatsapp-ai-disable.sql
+docs/sql/034-whatsapp-ai-preflight.sql
+docs/sql/034-whatsapp-ai-scheduler.sql
+docs/sql/034-whatsapp-ai-verify.sql
+docs/whatsapp-ai-load-results.json
+docs/whatsapp-ai-disabled-release.txt
+docs/whatsapp-ai-readonly.txt
+scripts/benchmark-whatsapp-ai.mjs
+scripts/prepare-whatsapp-ai-sql.mjs
+scripts/test.mjs
+scripts/whatsapp-ai-load-child.mjs
+src/app/api/cron/whatsapp-ai/route.ts
+src/features/ai-assistant/service.ts
+src/lib/whatsapp/ai-controls.test.ts
+src/lib/whatsapp/ai-db-fixture.ts
+src/lib/whatsapp/ai-db.test.ts
+src/lib/whatsapp/ai-disabled-release.test.ts
+src/lib/whatsapp/ai-operations.test.ts
+src/lib/whatsapp/ai-reader.ts
+src/lib/whatsapp/ai-report-regression-db.test.ts
+src/lib/whatsapp/ai-routing.test.ts
+src/lib/whatsapp/ai-routing.ts
+src/lib/whatsapp/ai-upgrade-variants.test.ts
+src/lib/whatsapp/ai-worker-http.test.ts
+src/lib/whatsapp/ai-worker-http.ts
+src/lib/whatsapp/ai-worker.test.ts
+src/lib/whatsapp/ai-worker.ts
+src/lib/whatsapp/fixtures/receive-attendance-production.sql
+src/lib/whatsapp/webhook.ts
+supabase/migrations/034_whatsapp_ai_readonly.sql

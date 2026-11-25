@@ -5,6 +5,7 @@ import { z } from "zod";
 import { parseAttendanceDecision } from "./attendance-messages";
 import {parseInventoryButton} from "@/features/inventory/domain";
 import {classifyWhatsAppReport} from "./report-routing";
+import {classifyWhatsAppIntent,whatsappAiEnabled} from './ai-routing';
 
 export function validMetaSignature(raw: Uint8Array, signature: string | null, secret: string | undefined) {
   if (!secret || !signature || !/^sha256=[a-f0-9]{64}$/i.test(signature)) return false;
@@ -29,6 +30,7 @@ export async function handleMetaWebhook(request: Request, db: () => SupabaseClie
   try { body = envelopeSchema.parse(JSON.parse(raw.toString("utf8"))); } catch { return new Response("Invalid webhook", { status: 400 }); }
   try {
     const admin = db();
+    let aiIntakeFailed=false;
     for (const entry of body.entry) for (const change of entry.changes) {
       const value = change.value;
       if (!config.phoneId || value.metadata?.phone_number_id !== config.phoneId) continue;
@@ -58,12 +60,22 @@ export async function handleMetaWebhook(request: Request, db: () => SupabaseClie
           continue;
         }
         if(message.type!=="text")continue;
+        if(whatsappAiEnabled()&&!message.context?.id&&classifyWhatsAppIntent(message.text.body)==='general_question'){
+          try{
+            const stored=await admin.rpc('receive_whatsapp_ai',{p_message_id:message.id,p_phone:message.from,p_phone_id:config.phoneId,p_text:message.text.body,p_at:at.toISOString()});
+            if(stored.error)throw new Error('AI_INTAKE_UNAVAILABLE');
+            if(stored.data===true)continue;
+          }catch{aiIntakeFailed=true;console.error('WhatsApp AI intake unavailable',{code:'AI_INTAKE_UNAVAILABLE'});continue;}
+        }
         const reportType=classifyWhatsAppReport(message.text.body);
         const stored = await admin.rpc(reportType.startsWith("inventory_")?"receive_inventory_whatsapp":"receive_whatsapp_attendance", { p_message_id: message.id, p_phone: message.from, p_phone_id: config.phoneId, p_text: message.text.body, p_at: at.toISOString() });
         console.info("WhatsApp attendance intake",{stage:"inbound",reportType,messageId:message.id,accepted:stored.data===true,databaseCode:stored.error?.code});
         if (stored.error) throw stored.error;
       }
     }
+    // Persist all reports even when AI intake fails. Meta may retry the envelope;
+    // shared provider-message dedup makes already stored reports safe to replay.
+    if(aiIntakeFailed)return new Response('AI intake unavailable; retry',{status:503});
     return Response.json({ received: true });
   } catch(error) { const code=(error as {code?:string})?.code;console.error("WhatsApp webhook durable intake failed",{code:"DURABLE_INTAKE_FAILED",originalCode:typeof code==="string"&&/^(?:[A-Z0-9]{5}|PGRST\d{3})$/.test(code)?code:undefined});return new Response("Durable intake unavailable; retry", { status: 503 }); }
 }

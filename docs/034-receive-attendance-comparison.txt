@@ -1,0 +1,88 @@
+034 Production receive_whatsapp_attendance investigation
+Source: user-supplied 034-receive-attendance-diagnostics.json; local analysis only.
+
+HASHES OF THE SUPPLIED PRODUCTION BODY (UTF-8)
+Raw CRLF: bf16be89a4c8a7dc7a2f1f19300df2b3
+After CRLF -> LF only, no trimming: 648605f47fb1f260ce58fdb6adfc1e7a
+Existing SQL normalization (remove CR, trim outer space/tab/LF):
+25e1b9ed098814007e3e35fc33b1724a
+020 with the same normalization: b68c2839dbf100c5da47bcca8a0c0be2
+The supplied function_definition contains exactly the supplied function_body.
+
+EXACT NORMALIZED DIFFERENCE
+020:        >=30 then raise exception 'Sender rate limit; retry delivery later'; end if;
+Production: >=30 then return false; end if;
+Replacing this one fragment in 020 makes the entire normalized bodies identical.
+CRLF is therefore not the reason for the normalized hash difference. This is a
+behavioral variant of the 020 body; its author/deployment origin is not established
+by pg_proc metadata or available local migration history.
+
+METADATA AND EXISTING BEHAVIOR
+Same five named text/text/text/text/timestamptz arguments; returns boolean.
+plpgsql, INVOKER, search_path="", owner postgres; volatile, non-strict,
+non-leakproof, parallel unsafe. Supplied ACL grants EXECUTE to postgres and
+service_role only; anon/authenticated denied; no overloads reported.
+The original declaration/ACL and locally restored metadata agree with these.
+Sender authorization, advisory lock, duplicate acknowledgement before quota,
+provider_message_id conflict handling, insert and successful return are identical.
+Hall matching, extraction, 033 selection and approval/save routines are outside
+this intake function and were not modified in this investigation.
+
+OBSERVED LOCAL REPRODUCTION BEFORE APPROVED UPGRADE
+Restored supplied CREATE OR REPLACE verbatim, including CRLF, in disposable PGlite.
+Verified byte-exact prosrc and all supplied signature/security/ACL/owner flags.
+Accepted 30 synthetic messages; the 31st returned false without insertion.
+Replaying an accepted message at the cap returned true without duplicate insertion.
+Inventory wrapper also returned false at the cap without inserting a message.
+Restoring original 020 instead raised its documented exception at the same cap.
+Current 034 rejected the Production variant; explicit rollback preserved the exact
+definition and created no AI task table. Existing MD5 guards remain unchanged.
+
+RISK AND PROPOSED FOLLOW-UP (NOT IMPLEMENTED)
+The Webhook treats false/no-RPC-error as HTTP success, whereas a database exception
+causes HTTP 503/retry. Thus the Production variant silently declines over-cap new
+attendance/inventory messages. Reverting to 020 would change this existing behavior.
+This does not prove the cause of any individual failed Production report.
+
+Historical stop (superseded by explicit upgrade approval on 2026-11-25):
+Per the instruction to stop before changes when a behavioral difference exists,
+034, its preflight and its generator were NOT changed to accept this variant.
+A future reviewed upgrade should preserve the Production return-false branch and
+modify only AI exclusion from the quota query via the active function definition.
+Use exact reviewed source and target hash pairs for each supported variant; assert
+one replacement, unchanged ACL/owner/settings, and reject every other body.
+Update preflight/verify generation consistently; never install an old 020 body.
+Tests must add both source variants, both post-upgrade hashes, quotas and duplicate
+replays at cap, inventory wrapper semantics, AI isolation and full rollback.
+No dependency on 029/031/032 is introduced or proposed.
+
+HISTORICAL STATUS: NO-GO before the explicitly approved compatibility update.
+Full existing candidate regression rerun: 296 tests, 294 passed, two unchanged
+templates.test.ts failures (hello_world body parameters; owner salary parameters).
+Attendance, inventory, 033 selection, confirmations, quota/dedup and AI permission
+tests passed on the candidate's currently supported baseline. This is NOT proof
+that an upgraded Production variant works: no such upgrade was implemented, and
+the exact Production installation was intentionally rejected by the existing guard.
+No commit, push, deploy, Production SQL or business-data changes performed.
+
+APPROVED COMPATIBILITY UPDATE - 2026-11-25
+Original 020: b68c2839dbf100c5da47bcca8a0c0be2 -> 8946438f48517f966676373073bf617c
+Production:   25e1b9ed098814007e3e35fc33b1724a -> d65c10859435cebe0693f8071913700e
+Claim:        e899d01490b7fafc5c5ee2b16cf232e3 -> 167604d06753b5279d1bd16e001aa850
+034 now selects the reviewed target from the exact source hash, patches the active
+definition once, and verifies the target plus every other pg_proc field unchanged.
+Production keeps return false, 020 keeps its exception; no other reporting change.
+The original Production definition is kept verbatim in the test fixture, with CRLF.
+Preflight/verify support both distinct variants without duplicate result rows.
+Local tests cover quota boundaries with interleaved inventory/attendance, duplicate
+replays at cap, separate AI quotas, unknown bodies, wrong targets and late failure.
+AI security/control and event selection regressions run against BOTH variants.
+Reinstallation still stops deliberately; failed installation rolls back all changes.
+Expected preflight: 67 PASS, 1 WARNING; fresh-install verify: 27 PASS, 1 WARNING.
+Production preflight and operational rollout approval remain required before use.
+Current full regression: 332 tests, 330 passed; only the same two baseline template
+failures remain. TypeScript and changed-file lint passed. The new variant tests
+also verify rejection by the read-only preflight when source is unknown.
+Isolated webpack Build: PASS. Local compatibility verdict: GO for controlled
+preflight/review; Production installation/activation still requires fresh checks
+and separate approval. No Production action has been taken.

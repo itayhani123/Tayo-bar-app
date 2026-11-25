@@ -1,0 +1,83 @@
+{
+  "environment": "LOCAL PGlite + separate OS AI process; no network/Production",
+  "warmup_per_type": 10,
+  "samples_per_type": 60,
+  "synthetic_model_delay_ms": 5000,
+  "results": [
+    {
+      "mode": "off",
+      "modelStarts": 0,
+      "overlappingReports": 0,
+      "stats": {
+        "attendance": {
+          "samples": 60,
+          "p50_ms": 9.57,
+          "p95_ms": 12.01,
+          "max_ms": 17.02
+        },
+        "inventory": {
+          "samples": 60,
+          "p50_ms": 8.32,
+          "p95_ms": 10.87,
+          "max_ms": 12.04
+        },
+        "approval": {
+          "samples": 60,
+          "p50_ms": 5.82,
+          "p95_ms": 9,
+          "max_ms": 11.73
+        }
+      }
+    },
+    {
+      "mode": "slow",
+      "modelStarts": 1,
+      "overlappingReports": 180,
+      "stats": {
+        "attendance": {
+          "samples": 60,
+          "p50_ms": 10.73,
+          "p95_ms": 17.7,
+          "max_ms": 71.52
+        },
+        "inventory": {
+          "samples": 60,
+          "p50_ms": 9.01,
+          "p95_ms": 14.67,
+          "max_ms": 16.27
+        },
+        "approval": {
+          "samples": 60,
+          "p50_ms": 6.18,
+          "p95_ms": 11.26,
+          "max_ms": 16.98
+        }
+      }
+    },
+    {
+      "mode": "failed",
+      "modelStarts": 1,
+      "overlappingReports": 180,
+      "stats": {
+        "attendance": {
+          "samples": 60,
+          "p50_ms": 11.32,
+          "p95_ms": 18.11,
+          "max_ms": 24.44
+        },
+        "inventory": {
+          "samples": 60,
+          "p50_ms": 9.75,
+          "p95_ms": 14.59,
+          "max_ms": 17.8
+        },
+        "approval": {
+          "samples": 60,
+          "p50_ms": 6.53,
+          "p95_ms": 8.59,
+          "max_ms": 11.27
+        }
+      }
+    }
+  ]
+}

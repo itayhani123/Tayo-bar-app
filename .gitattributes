@@ -1,0 +1,2 @@
+# Preserve the reviewed Production function fixture byte-for-byte, including CRLF.
+src/lib/whatsapp/fixtures/receive-attendance-production.sql -text
