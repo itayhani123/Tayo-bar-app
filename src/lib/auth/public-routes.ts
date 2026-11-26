@@ -1,5 +1,6 @@
 export const UNAUTHENTICATED_SERVER_ROUTES = [
   "/api/cron/whatsapp-notifications",
+  "/api/cron/whatsapp-ai",
   "/api/webhooks/whatsapp",
   "/offline",
   "/privacy",
